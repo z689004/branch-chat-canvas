@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, watch, nextTick } from 'vue'
-import { useVueFlow } from '@vue-flow/core'
+import { useVueFlow, Handle, Position } from '@vue-flow/core'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import MarkdownIt from 'markdown-it'
 import { useTreeStore } from '../store/tree'
@@ -255,6 +255,10 @@ watch(
       />
       <el-button type="primary" :loading="sending" class="send-btn" @click="send">发送</el-button>
     </div>
+
+    <!-- 金字塔布局的连接锚点：上进下出（隐藏显示，仅作为连线端点） -->
+    <Handle type="target" :position="Position.Top" :is-connectable="false" class="node-anchor" />
+    <Handle type="source" :position="Position.Bottom" :is-connectable="false" class="node-anchor" />
 
     <!-- 拖拽调整卡片尺寸：四条边 + 四个角，任意方向自由缩放 -->
     <template v-if="!node.isCollapsed">

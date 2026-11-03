@@ -35,6 +35,9 @@ body {
 /* ---------- 画布区 ---------- */
 .canvas-wrap { flex: 1; position: relative; }
 .vue-flow { width: 100%; height: 100%; }
+/* 整理布局时节点平滑移动到金字塔位置（拖拽中不生效） */
+.vue-flow__node { transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1); }
+.vue-flow__node.dragging { transition: none; }
 
 /* ---------- 节点卡片 ---------- */
 .chat-node {
@@ -49,6 +52,13 @@ body {
   transition: box-shadow 0.2s;
 }
 .chat-node.resizing { transition: none; box-shadow: 0 10px 30px rgba(22, 93, 255, 0.22); }
+
+/* ---------- 连线锚点：上进下出（金字塔布局），隐藏圆点但保留端点位置 ---------- */
+.node-anchor.vue-flow__handle {
+  width: 8px; height: 8px; min-width: 0; min-height: 0;
+  border: none; background: transparent; opacity: 0;
+  pointer-events: none;
+}
 
 /* ---------- 卡片尺寸拖拽手柄（八向：四边 + 四角） ---------- */
 .rs-handle { position: absolute; z-index: 6; }

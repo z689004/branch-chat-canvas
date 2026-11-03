@@ -132,9 +132,16 @@ export async function createChildNode(payload) {
   const tree = readTree(payload.treeId)
   const parent = tree.nodeList.find((n) => n.nodeId === payload.parentId)
   if (!parent) throw new Error('父节点不存在')
-  const idx = tree.nodeList.filter((n) => n.parentId === payload.parentId).length
-  const x = payload.x != null ? payload.x : parent.x + 460
-  const y = payload.y != null ? payload.y : parent.y + idx * 280 - (idx > 0 ? 140 : 0)
+  // 默认位置：金字塔布局 —— 子节点落在父节点下方一层，兄弟依次向右排开
+  const siblings = tree.nodeList.filter((n) => n.parentId === payload.parentId)
+  const psize = parent.size || {}
+  const cardW = psize.w || 340
+  const cardH = psize.h || 380
+  const y = payload.y != null ? payload.y : parent.y + cardH + 150
+  let x
+  if (payload.x != null) x = payload.x
+  else if (siblings.length) x = Math.max(...siblings.map((n) => n.x)) + cardW + 90
+  else x = parent.x
   const child = newNode(
     payload.parentId,
     payload.title || CHILD_TITLE_DEFAULT,

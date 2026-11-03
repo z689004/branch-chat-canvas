@@ -24,11 +24,12 @@ echo ==^> 安装依赖（如未安装）
 python -m pip install -q pyinstaller pywebview pillow
 
 echo ==^> 打包为独立窗口桌面应用（无控制台、带图标）
+rem 注意：--specpath 会使相对路径按 spec 目录解析，资源一律用 %~dp0 绝对路径
 python -m PyInstaller --noconfirm --clean --onefile --windowed ^
   --name BranchChatCanvas ^
-  --icon "assets\icon.ico" ^
-  --add-data "frontend\public;frontend\public" ^
-  --add-data "assets;assets" ^
+  --icon "%~dp0assets\icon.ico" ^
+  --add-data "%~dp0frontend\public;frontend\public" ^
+  --add-data "%~dp0assets;assets" ^
   --collect-all webview ^
   --collect-all pythonnet ^
   --collect-all clr_loader ^

@@ -28,7 +28,10 @@ const flowEdges = computed(() =>
       id: `e-${n.parentId}-${n.nodeId}`,
       source: n.parentId,
       target: n.nodeId,
-      type: 'default',
+      // 金字塔布局：连线从父节点底部出发，接到子节点顶部
+      type: 'smoothstep',
+      sourcePosition: 'bottom',
+      targetPosition: 'top',
       animated: false,
       style: { stroke: '#a8b3c5', strokeWidth: 2 },
       markerEnd: { type: 'arrowclosed', color: '#a8b3c5' }
@@ -80,6 +83,9 @@ function onMouseUp(e) {
   })
 }
 
+const AUTO_TIDY_KEY = 'bcc:autoTidy'
+const autoTidy = ref(localStorage.getItem(AUTO_TIDY_KEY) !== '0')   // 默认开启
+
 async function quickCreate(mode) {
   if (!branch.nodeId || !branch.text) return
   try {
@@ -87,6 +93,8 @@ async function quickCreate(mode) {
     await store.createChild(branch.nodeId, branch.text, mode, title)
     branch.visible = false
     window.getSelection()?.removeAllRanges()
+    // 新建分支后按金字塔重新排布（可关闭后自由摆放）
+    if (autoTidy.value) store.tidyLayout()
     ElMessage.success(mode === 'simple' ? '已创建精简分支，去新节点继续追问吧' : '已创建完整分支，去新节点继续追问吧')
     nextTick(() => fitView({ padding: 0.25, duration: 400 }))
   } catch (e) {
@@ -236,8 +244,12 @@ async function saveRenameTree() {
 }
 function tidyLayout() {
   store.tidyLayout()
-  ElMessage.success('已整理布局')
+  ElMessage.success('已按金字塔结构整理布局')
   nextTick(() => fitView({ padding: 0.2, duration: 400 }))
+}
+function onAutoTidyChange(v) {
+  localStorage.setItem(AUTO_TIDY_KEY, v ? '1' : '0')
+  if (v) tidyLayout()
 }
 function onKeydown(e) {
   if (e.key === 'Escape') {
@@ -292,7 +304,10 @@ onBeforeUnmount(() => {
         <span class="hint-tag">💡 划词创建分支</span>
       </el-tooltip>
       <div class="spacer"></div>
-      <el-tooltip content="节点散乱时，一键整理为整齐的对话树" placement="bottom">
+      <el-tooltip content="新建分支后自动按金字塔排布；取消勾选可手动自由摆放" placement="bottom">
+        <el-checkbox v-model="autoTidy" size="small" style="margin-right: 4px;" @change="onAutoTidyChange">自动整理</el-checkbox>
+      </el-tooltip>
+      <el-tooltip content="把节点整理成金字塔对话树：根在顶部居中，逐层向下展开" placement="bottom">
         <el-button size="small" @click="tidyLayout">✨ 整理布局</el-button>
       </el-tooltip>
       <el-button size="small" @click="fitView({ padding: 0.25, duration: 300 })">适应视图</el-button>

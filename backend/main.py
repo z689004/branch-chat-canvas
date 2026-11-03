@@ -181,11 +181,18 @@ def tree_delete(treeId: str):
 def node_create_child(body: ChildCreateBody):
     tree = get_tree_or_404(body.treeId)
     parent = get_node(tree, body.parentId)
-    # 默认位置：父节点右侧，按兄弟序号纵向排开
+    # 默认位置：金字塔布局 —— 子节点落在父节点下方一层，兄弟依次向右排开
     siblings = [n for n in tree["nodeList"] if n["parentId"] == body.parentId]
-    idx = len(siblings)
-    x = body.x if body.x is not None else parent["x"] + 460
-    y = body.y if body.y is not None else parent["y"] + idx * 280 - (idx > 0 and 140 or 0)
+    psize = parent.get("size") or {}
+    card_w = psize.get("w", 340)
+    card_h = psize.get("h", 380)
+    y = body.y if body.y is not None else parent["y"] + card_h + 150
+    if body.x is not None:
+        x = body.x
+    elif siblings:
+        x = max(n["x"] for n in siblings) + card_w + 90
+    else:
+        x = parent["x"]
     child = _new_node(
         parent_id=body.parentId,
         title=body.title or CHILD_TITLE_DEFAULT,

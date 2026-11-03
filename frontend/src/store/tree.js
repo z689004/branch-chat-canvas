@@ -175,26 +175,102 @@ export const useTreeStore = defineStore('tree', {
       await this.refreshTreeList()
     },
 
-    /** 一键整理布局：深度优先，父节点居中于子节点之间 */
+    /** 金字塔布局：根节点顶部居中，逐层向下展开，父节点居中于其子节点上方 */
     tidyLayout() {
-      const V_GAP = 470, H_GAP = 480
-      let cursor = 0
-      const place = (nodeId, depth) => {
-        const node = this.nodeMap[nodeId]
-        if (!node) return
-        node.x = depth * H_GAP
-        const kids = (this.childrenMap[nodeId] || [])
-        if (!kids.length) {
-          node.y = cursor
-          cursor += V_GAP
-          return
-        }
-        kids.forEach(k => place(k.nodeId, depth + 1))
-        node.y = (this.nodeMap[kids[0].nodeId].y + this.nodeMap[kids[kids.length - 1].nodeId].y) / 2
+      const H_GAP = 90          // 同层相邻子树的水平间距
+      const V_GAP = 150         // 层与层之间的垂直间距
+      const ROOT_GAP = 120      // 多根之间的间距
+      const DEF_W = 340, DEF_H = 380, COLLAPSED_H = 76
+      const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v))
+      const sizeOf = (n) => ({
+        w: clamp(Number(n?.size?.w) || DEF_W, 260, 1200),
+        h: n?.isCollapsed ? COLLAPSED_H : clamp(Number(n?.size?.h) || DEF_H, 240, 1600)
+      })
+
+      const vis = new Set(this.visibleNodes.map(n => n.nodeId))
+      if (!vis.size) return
+      const kidsOf = (id) => (this.childrenMap[id] || []).filter(k => vis.has(k.nodeId))
+
+      // 1) 计算深度，并按每层最高卡片推导每层的 y
+      const depth = {}
+      const markDepth = (id, d) => {
+        depth[id] = d
+        kidsOf(id).forEach(k => markDepth(k.nodeId, d + 1))
       }
-      this.roots.forEach(r => place(r.nodeId, 0))
-      // 持久化所有坐标
-      for (const n of this.nodes) {
+      const roots = this.roots.filter(r => vis.has(r.nodeId))
+      roots.forEach(r => markDepth(r.nodeId, 0))
+
+      const levelH = []
+      for (const id of vis) {
+        const d = depth[id]
+        levelH[d] = Math.max(levelH[d] || 0, sizeOf(this.nodeMap[id]).h)
+      }
+      const levelY = []
+      let y = 0
+      for (let d = 0; d < levelH.length; d++) {
+        levelY[d] = y
+        y += (levelH[d] || DEF_H) + V_GAP
+      }
+
+      // 2) 自底向上递归：叶子占自身宽度，父节点居中于子节点跨度之上
+      //    返回 { w: 子树占用宽度, ids: 子树全部节点 }
+      const place = (id, left) => {
+        const node = this.nodeMap[id]
+        const s = sizeOf(node)
+        const kids = kidsOf(id)
+        node.y = levelY[depth[id]]
+
+        if (!kids.length) {
+          node.x = left
+          return { w: s.w, ids: [id] }
+        }
+
+        let cursor = left
+        let firstCenter = 0, lastCenter = 0
+        const ids = [id]
+        kids.forEach((k, i) => {
+          const r = place(k.nodeId, cursor)
+          ids.push(...r.ids)
+          const kn = this.nodeMap[k.nodeId]
+          const center = kn.x + sizeOf(kn).w / 2
+          if (i === 0) firstCenter = center
+          lastCenter = center
+          cursor += r.w + H_GAP
+        })
+
+        const kidsSpan = cursor - H_GAP - left          // 子节点总跨度
+        const subW = Math.max(s.w, kidsSpan)            // 子树占用宽度
+        const shift = (subW - kidsSpan) / 2             // 父比孩子宽时，孩子整体居中
+        if (shift > 0.5) {
+          for (const kidId of ids) {
+            if (kidId !== id) this.nodeMap[kidId].x += shift
+          }
+          firstCenter += shift
+          lastCenter += shift
+        }
+        node.x = (firstCenter + lastCenter) / 2 - s.w / 2
+        return { w: subW, ids }
+      }
+
+      let cursor = 0
+      roots.forEach(r => {
+        const res = place(r.nodeId, cursor)
+        cursor += res.w + ROOT_GAP
+      })
+
+      // 3) 取整并整体归零（左上角从 0 开始），再持久化
+      let minX = Infinity, minY = Infinity
+      for (const id of vis) {
+        const n = this.nodeMap[id]
+        n.x = Math.round(n.x)
+        n.y = Math.round(n.y)
+        minX = Math.min(minX, n.x)
+        minY = Math.min(minY, n.y)
+      }
+      for (const id of vis) {
+        const n = this.nodeMap[id]
+        n.x -= minX
+        n.y -= minY
         updateNodeApi({ treeId: this.treeId, nodeId: n.nodeId, x: n.x, y: n.y }).catch(() => {})
       }
     }
