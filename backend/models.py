@@ -60,6 +60,8 @@ class NodeUpdateBody(BaseModel):
     contextMode: Optional[str] = None
     x: Optional[float] = None
     y: Optional[float] = None
+    # 卡片尺寸：{"w": 宽度, "h": 高度}，由前端拖拽调整后保存
+    size: Optional[dict] = None
 
 
 class SendBody(BaseModel):

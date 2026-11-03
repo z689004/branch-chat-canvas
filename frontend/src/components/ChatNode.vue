@@ -1,11 +1,13 @@
 <script setup>
 import { ref, computed, watch, nextTick } from 'vue'
+import { useVueFlow } from '@vue-flow/core'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import MarkdownIt from 'markdown-it'
 import { useTreeStore } from '../store/tree'
 
 const props = defineProps({ nodeId: { type: String, required: true } })
 const store = useTreeStore()
+const { viewport } = useVueFlow()
 
 const node = computed(() => store.nodeMap[props.nodeId])
 const sending = computed(() => store.streamingNodeIds.includes(props.nodeId))
@@ -73,6 +75,61 @@ async function removeSelf() {
   } catch (e) { /* 取消 */ }
 }
 
+// ---------- 卡片尺寸：可拖拽调整并持久化 ----------
+const DEFAULT_W = 340, DEFAULT_H = 380
+const MIN_W = 260, MIN_H = 240, MAX_W = 1200, MAX_H = 1600
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v))
+
+const resizing = ref(false)
+const liveSize = ref(null)                       // 拖拽过程中的临时尺寸
+const savedSize = computed(() => {
+  const s = node.value?.size
+  return {
+    w: clamp(Number(s?.w) || DEFAULT_W, MIN_W, MAX_W),
+    h: clamp(Number(s?.h) || DEFAULT_H, MIN_H, MAX_H),
+  }
+})
+const cardSize = computed(() => liveSize.value || savedSize.value)
+
+function startResize(e, mode) {
+  e.stopPropagation()
+  e.preventDefault()
+  const zoom = viewport?.value?.zoom || 1        // 画布缩放：屏幕位移需换算为节点位移
+  const startX = e.clientX, startY = e.clientY
+  const base = { ...cardSize.value }
+  resizing.value = true
+
+  const onMove = (ev) => {
+    const dx = (ev.clientX - startX) / zoom
+    const dy = (ev.clientY - startY) / zoom
+    const next = { ...base }
+    if (mode !== 'h') next.w = clamp(base.w + dx, MIN_W, MAX_W)
+    if (mode !== 'w') next.h = clamp(base.h + dy, MIN_H, MAX_H)
+    liveSize.value = next
+  }
+  const onUp = () => {
+    document.removeEventListener('mousemove', onMove)
+    document.removeEventListener('mouseup', onUp)
+    resizing.value = false
+    const next = liveSize.value
+    liveSize.value = null
+    if (next && (Math.round(next.w) !== Math.round(base.w) || Math.round(next.h) !== Math.round(base.h))) {
+      store.patchNode(props.nodeId, { size: { w: Math.round(next.w), h: Math.round(next.h) } })
+    }
+  }
+  document.addEventListener('mousemove', onMove)
+  document.addEventListener('mouseup', onUp)
+}
+function resetSize() {
+  store.patchNode(props.nodeId, { size: { w: DEFAULT_W, h: DEFAULT_H } })
+}
+function onMenu(cmd) {
+  if (cmd === 'rename') startRename()
+  else if (cmd === 'collapse') toggleCollapse()
+  else if (cmd === 'size') resetSize()
+  else if (cmd === 'delete') removeSelf()
+}
+
 // 流式输出时滚动到底部
 watch(
   () => node.value?.messages?.map(m => m.content.length).join(','),
@@ -85,7 +142,12 @@ watch(
 </script>
 
 <template>
-  <div v-if="node" class="chat-node" :class="{ collapsed: node.isCollapsed }">
+  <div
+    v-if="node"
+    class="chat-node"
+    :class="{ collapsed: node.isCollapsed, resizing }"
+    :style="{ width: cardSize.w + 'px', height: node.isCollapsed ? 'auto' : cardSize.h + 'px' }"
+  >
     <header class="node-header" :class="node.parentId ? 'is-branch' : 'is-root'">
       <span class="node-icon">{{ node.parentId ? '🌿' : '🌱' }}</span>
       <template v-if="editing">
@@ -108,11 +170,12 @@ watch(
       <el-tooltip :content="node.isCollapsed ? '展开子树' : '折叠子树'" placement="top">
         <span class="hdr-btn" @click="toggleCollapse">{{ node.isCollapsed ? '➕' : '➖' }}</span>
       </el-tooltip>
-      <el-dropdown trigger="click" @command="cmd => cmd === 'rename' ? startRename() : cmd === 'collapse' ? toggleCollapse() : removeSelf()">
+      <el-dropdown trigger="click" @command="onMenu">
         <span class="node-menu-btn">⋮</span>
         <template #dropdown>
           <el-dropdown-menu>
             <el-dropdown-item command="rename">✏️ 重命名</el-dropdown-item>
+            <el-dropdown-item command="size">📐 重置卡片尺寸</el-dropdown-item>
             <el-dropdown-item command="collapse">
               {{ node.isCollapsed ? `📂 展开子树${childCount ? `（${childCount}）` : ''}` : `📦 折叠子树${descendantCount ? `（${descendantCount}）` : ''}` }}
             </el-dropdown-item>
@@ -156,6 +219,13 @@ watch(
       />
       <el-button type="primary" :loading="sending" class="send-btn" @click="send">发送</el-button>
     </div>
+
+    <!-- 拖拽调整卡片尺寸：右边调宽、下边调高、右下角同时调整 -->
+    <template v-if="!node.isCollapsed">
+      <div class="rs-handle rs-right nodrag" title="拖动调整宽度" @mousedown.stop.prevent="startResize($event, 'w')"></div>
+      <div class="rs-handle rs-bottom nodrag" title="拖动调整高度" @mousedown.stop.prevent="startResize($event, 'h')"></div>
+      <div class="rs-handle rs-corner nodrag" title="拖动调整大小" @mousedown.stop.prevent="startResize($event, 'both')"></div>
+    </template>
   </div>
 </template>
 

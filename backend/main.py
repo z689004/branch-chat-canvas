@@ -213,6 +213,14 @@ def node_update(body: NodeUpdateBody):
         node["x"] = body.x
     if body.y is not None:
         node["y"] = body.y
+    if body.size:
+        try:
+            node["size"] = {
+                "w": float(body.size.get("w")),
+                "h": float(body.size.get("h")),
+            }
+        except (TypeError, ValueError):
+            pass
     node["updateTime"] = now()
     tree["updateTime"] = now()
     storage.save_tree(tree)
