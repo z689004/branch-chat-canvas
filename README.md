@@ -10,8 +10,9 @@
 
 | 运行方式 | 适合场景 | 依赖 |
 |---|---|---|
-| ⚡ **纯前端单文件**（`dist-web/index.html`） | 双击即用、发给别人、离线演示，数据存浏览器 | 无（构建后零依赖） |
-| 🖥️ **FastAPI 完整版** | 数据落盘、多画布管理、局域网/服务器共享 | Python 3.9+ / Node 18+（或 Docker） |
+| 🖥️ **桌面软件（.exe）** | 双击即用，无需安装 Python/Node，可拷给别人 | 无（打包后单文件） |
+| ⚡ **纯前端单文件**（`dist-web/index.html`） | 双击即用、发给别人、离线演示，数据存浏览器 | 无 |
+| 🌐 **FastAPI 完整版** | 数据落盘、多画布管理、局域网/服务器共享 | Python 3.9+ / Node 18+（或 Docker） |
 
 ---
 
@@ -31,7 +32,17 @@
 
 ## 🚀 快速开始
 
-### 方式一：Docker（推荐）
+### 方式一：桌面版 exe（Windows，双击即用，无需任何环境）
+
+```bash
+build_exe.bat          # 打包一次，产出 dist-exe\BranchChatCanvas.exe（约 17MB）
+```
+
+双击 `BranchChatCanvas.exe` → 等待 3~8 秒 → 自动打开浏览器界面。
+数据保存在 **exe 同级的 `data/` 目录**，整个文件夹拷走即可带着对话记录迁移；
+关闭黑色控制台窗口即退出程序。若 8000 端口被占用会自动顺延（8001、8002…）。
+
+### 方式二：Docker
 
 ```bash
 git clone https://github.com/<you>/branch-chat-canvas.git
@@ -39,7 +50,7 @@ cd branch-chat-canvas
 docker compose up -d          # 打开 http://localhost:8000
 ```
 
-### 方式二：一键脚本
+### 方式三：一键脚本
 
 ```bash
 # Windows
@@ -51,7 +62,7 @@ chmod +x start.sh && ./start.sh
 
 脚本会自动安装依赖、构建前端（首次）并启动服务。
 
-### 方式三：手动
+### 方式四：手动
 
 ```bash
 # 1) 后端
@@ -64,7 +75,7 @@ npm install
 npm run build                         # 产物由后端自动托管
 ```
 
-### 方式四：纯前端单文件（无需任何环境）
+### 方式五：纯前端单文件（无需任何环境）
 
 ```bash
 cd frontend
@@ -130,6 +141,7 @@ branch-chat-canvas/
 │   ├── models.py         #   Pydantic 请求模型
 │   ├── llm_client.py     #   大模型调用（openai 兼容 / ollama / mock）
 │   ├── storage.py        #   JSON 文件存储（backend/data/）
+│   ├── desktop.py        #   桌面版启动器（自动选端口 + 打开浏览器）
 │   └── data/             #   运行时数据（不入库 git）
 ├── frontend/             # Vue3 + VueFlow + Element Plus + Pinia
 │   └── src/
@@ -139,6 +151,7 @@ branch-chat-canvas/
 │       └── api/          #   backend.js（走后端）/ standalone.js（纯前端）
 ├── docs/                 # 设计文档
 ├── start.bat / start.sh  # 一键启动脚本
+├── build_exe.bat         # 打包桌面版 exe（PyInstaller）
 ├── Dockerfile / docker-compose.yml
 └── .env.example          # 环境变量模板
 ```
@@ -177,6 +190,9 @@ branch-chat-canvas/
 - **网页直连模型失败（Failed to fetch）？**
   部分 API 服务不允许浏览器跨域（CORS）直连。DeepSeek 官方端点已验证支持；
   其他服务请改用完整版（后端代理调用）。
+- **exe 首次启动慢 / 被安全软件拦截？**
+  单文件 exe 启动需解包 3~8 秒属正常；PyInstaller 未签名程序可能被 Defender 误报，
+  选择“仍要运行”或加入白名单即可，也可改用源码方式启动。
 
 ## 🗺️ Roadmap
 

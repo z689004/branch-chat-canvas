@@ -16,6 +16,12 @@ yarn-error.log*
 frontend/dist/
 frontend/dist-web/
 frontend/public/
+dist-exe/
+build/
+*.spec
+
+# ---------- 桌面版运行时数据（exe 同级 data/） ----------
+/data/
 
 # ---------- 运行时数据（含对话记录与 API Key，切勿提交） ----------
 backend/data/*.json

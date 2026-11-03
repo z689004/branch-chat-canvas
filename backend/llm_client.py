@@ -27,7 +27,7 @@ CONFIG = {
     "ollamaModel": os.getenv("OLLAMA_MODEL", "qwen2.5:7b"),
 }
 
-CONFIG_PATH = Path(__file__).parent / "data" / "llm_config.json"
+CONFIG_PATH = Path(os.getenv("BCC_DATA_DIR") or (Path(__file__).parent / "data")) / "llm_config.json"
 _CONFIG_KEYS = ("provider", "openaiBaseUrl", "openaiApiKey", "llmModel",
                 "ollamaBaseUrl", "ollamaModel")
 

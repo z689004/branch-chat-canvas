@@ -1,11 +1,15 @@
 # -*- coding: utf-8 -*-
-"""存储层：每棵对话树一个 JSON 文件，持久化到 data/ 目录。"""
+"""存储层：每棵对话树一个 JSON 文件，持久化到 data/ 目录。
+
+数据目录优先级：环境变量 BCC_DATA_DIR > backend/data（桌面版由启动器指向 exe 同级 data）
+"""
 import json
+import os
 import threading
 from pathlib import Path
 
-DATA_DIR = Path(__file__).parent / "data"
-DATA_DIR.mkdir(exist_ok=True)
+DATA_DIR = Path(os.getenv("BCC_DATA_DIR") or (Path(__file__).parent / "data"))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 _lock = threading.RLock()
 

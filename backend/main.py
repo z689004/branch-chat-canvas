@@ -353,8 +353,12 @@ def tree_export(treeId: str, format: str = "markdown"):
 
 
 # ---------------- 静态托管前端构建产物 ----------------
-# public/ 为发布用产物目录（构建产物被复制到此，避免部署时被当作 build output 忽略）
-for cand in (ROOT_DIR / "frontend" / "public", ROOT_DIR / "frontend" / "dist"):
+# 候选顺序：环境变量 BCC_STATIC_DIR（桌面版指向打包内的资源）> public > dist
+_static_candidates = []
+if os.getenv("BCC_STATIC_DIR"):
+    _static_candidates.append(Path(os.environ["BCC_STATIC_DIR"]))
+_static_candidates += [ROOT_DIR / "frontend" / "public", ROOT_DIR / "frontend" / "dist"]
+for cand in _static_candidates:
     if cand.exists() and (cand / "index.html").exists():
         app.mount("/", StaticFiles(directory=str(cand), html=True), name="static")
         break
