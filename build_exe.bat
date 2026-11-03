@@ -14,23 +14,35 @@ if not exist "frontend\public\index.html" (
   popd
 )
 
-echo ==^> 安装 PyInstaller（如未安装）
-python -m pip install -q pyinstaller
+echo ==^> 检查应用图标
+if not exist "assets\icon.ico" (
+  echo 未找到 assets\icon.ico，正在生成...
+  python tools\make_icon.py || (echo 图标生成失败 & pause & exit /b 1)
+)
 
-echo ==^> 打包为单个 exe
-python -m PyInstaller --noconfirm --clean --onefile ^
+echo ==^> 安装依赖（如未安装）
+python -m pip install -q pyinstaller pywebview pillow
+
+echo ==^> 打包为独立窗口桌面应用（无控制台、带图标）
+python -m PyInstaller --noconfirm --clean --onefile --windowed ^
   --name BranchChatCanvas ^
-  --add-data "frontend/public;frontend/public" ^
+  --icon "assets\icon.ico" ^
+  --add-data "frontend\public;frontend\public" ^
+  --add-data "assets;assets" ^
+  --collect-all webview ^
+  --collect-all pythonnet ^
+  --collect-all clr_loader ^
   --hidden-import uvicorn.logging ^
   --hidden-import uvicorn.loops.auto ^
   --hidden-import uvicorn.protocols.http.auto ^
   --hidden-import uvicorn.protocols.websockets.auto ^
   --hidden-import uvicorn.lifespan.on ^
   --distpath dist-exe --workpath build\pyinstaller --specpath build ^
-  backend\desktop.py
+  backend\app_desktop.py
 if errorlevel 1 ( echo 打包失败 & pause & exit /b 1 )
 
 echo.
 echo ==^> 完成：dist-exe\BranchChatCanvas.exe
-echo     双击即可运行，首次启动约需 3-8 秒
+echo     双击运行：打开独立应用窗口（不依赖浏览器）
+echo     首次启动约需 5-10 秒
 pause

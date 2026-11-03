@@ -35,12 +35,17 @@
 ### 方式一：桌面版 exe（Windows，双击即用，无需任何环境）
 
 ```bash
-build_exe.bat          # 打包一次，产出 dist-exe\BranchChatCanvas.exe（约 17MB）
+build_exe.bat          # 打包一次，产出 dist-exe\BranchChatCanvas.exe（约 19MB）
 ```
 
-双击 `BranchChatCanvas.exe` → 等待 3~8 秒 → 自动打开浏览器界面。
-数据保存在 **exe 同级的 `data/` 目录**，整个文件夹拷走即可带着对话记录迁移；
-关闭黑色控制台窗口即退出程序。若 8000 端口被占用会自动顺延（8001、8002…）。
+双击 `BranchChatCanvas.exe` → 等待 5~10 秒 → **打开独立应用窗口**（基于系统 WebView2 内核渲染，
+不依赖也不打开浏览器，无控制台黑窗）。任务栏与窗口使用内置应用图标。
+
+- 数据保存在 **exe 同级的 `data/` 目录**，整个文件夹拷走即可带着对话记录迁移
+- 关闭应用窗口即退出程序
+- 端口自动挑选空闲值（8765 起，被占用自动顺延），多开互不冲突
+- 应用图标由 `tools/make_icon.py` 生成（可自行替换后重新打包）
+- 调试：设置环境变量 `BCC_DEBUG=1` 可打开 DevTools
 
 ### 方式二：Docker
 
@@ -141,7 +146,7 @@ branch-chat-canvas/
 │   ├── models.py         #   Pydantic 请求模型
 │   ├── llm_client.py     #   大模型调用（openai 兼容 / ollama / mock）
 │   ├── storage.py        #   JSON 文件存储（backend/data/）
-│   ├── desktop.py        #   桌面版启动器（自动选端口 + 打开浏览器）
+│   ├── app_desktop.py    #   桌面版启动器（pywebview 独立窗口，自动选端口）
 │   └── data/             #   运行时数据（不入库 git）
 ├── frontend/             # Vue3 + VueFlow + Element Plus + Pinia
 │   └── src/
@@ -151,7 +156,8 @@ branch-chat-canvas/
 │       └── api/          #   backend.js（走后端）/ standalone.js（纯前端）
 ├── docs/                 # 设计文档
 ├── start.bat / start.sh  # 一键启动脚本
-├── build_exe.bat         # 打包桌面版 exe（PyInstaller）
+├── build_exe.bat         # 打包桌面版 exe（PyInstaller + pywebview）
+├── tools/make_icon.py    # 生成应用图标 assets/icon.ico
 ├── Dockerfile / docker-compose.yml
 └── .env.example          # 环境变量模板
 ```
