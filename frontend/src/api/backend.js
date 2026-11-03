@@ -41,7 +41,14 @@ export async function exportTree(treeId, format) {
 export const getLlmConfig = () => request('/api/llm/config')
 export const updateLlmConfig = (patch) =>
   request('/api/llm/config', { method: 'POST', body: JSON.stringify(patch) })
-export const testLlm = () => request('/api/llm/test', { method: 'POST', body: '{}' })
+export const saveLlmProfile = (payload) =>
+  request('/api/llm/profile', { method: 'POST', body: JSON.stringify(payload) })
+export const deleteLlmProfile = (id) =>
+  request(`/api/llm/profile/${encodeURIComponent(id)}`, { method: 'DELETE' })
+export const activateLlmProfile = (id) =>
+  request(`/api/llm/profile/${encodeURIComponent(id)}/activate`, { method: 'POST', body: '{}' })
+export const testLlm = (payload) =>
+  request('/api/llm/test', { method: 'POST', body: JSON.stringify(payload || {}) })
 
 /**
  * SSE 流式提问：onChunk 逐段回调 AI 回答片段，返回完整回答。

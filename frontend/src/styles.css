@@ -250,6 +250,48 @@ body {
 }
 .llm-test-result.ok { background: #e8f7ee; color: #00b42a; }
 .llm-test-result.fail { background: #ffece8; color: #f53f3f; }
+.llm-test-result.warn { background: #fff7e8; color: #ff7d00; }
+.llm-test-result.dim { background: #f2f3f5; color: #86909c; }
+
+/* 多密钥档案列表 */
+.prof-head { display: flex; align-items: center; justify-content: space-between; margin: 4px 0 10px; }
+.prof-empty {
+  padding: 18px; text-align: center; font-size: 13px; color: #86909c;
+  background: #f7f8fa; border: 1px dashed #e5e8eb; border-radius: 10px;
+}
+.prof-row {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+  padding: 10px 12px; margin-bottom: 8px; border: 1px solid #e5e8eb; border-radius: 10px;
+  background: #fff;
+}
+.prof-row.active { border-color: #00b42a; background: #f6fffa; }
+.prof-main { min-width: 0; flex: 1; }
+.prof-name { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.prof-dot { width: 8px; height: 8px; border-radius: 50%; background: #c9cdd4; display: inline-block; }
+.prof-dot.on { background: #00b42a; }
+.prof-tag {
+  font-size: 11px; font-weight: 500; color: #86909c;
+  background: #f2f3f5; border-radius: 4px; padding: 1px 6px;
+}
+.prof-tag.on { color: #00b42a; background: #e8f7ee; }
+.prof-meta { font-size: 12px; color: #86909c; margin-top: 4px; word-break: break-all; }
+.prof-test { font-size: 12px; margin-top: 4px; line-height: 1.5; }
+.prof-test.ok { color: #00b42a; }
+.prof-test.fail { color: #f53f3f; }
+.prof-test.dim { color: #a9aeb8; }
+.prof-ts { color: #a9aeb8; margin-left: 6px; }
+.prof-ops { display: flex; gap: 6px; flex-shrink: 0; }
+
+.prof-form {
+  margin-top: 14px; padding: 12px; border: 1px solid #e5e8eb;
+  border-radius: 10px; background: #fafbfc;
+}
+.form-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.form-label { width: 62px; flex-shrink: 0; font-size: 13px; color: #4e5969; }
+.prof-form-ops { display: flex; gap: 8px; margin-top: 12px; }
+.model-chips { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.chips-label { font-size: 12px; color: #86909c; }
+.model-chip { cursor: pointer; }
 
 /* ---------- 欢迎页 ---------- */
 .welcome {

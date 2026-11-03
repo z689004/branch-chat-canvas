@@ -6,7 +6,10 @@ import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useTreeStore } from './store/tree'
-import { exportTree, getLlmConfig, updateLlmConfig, testLlm, isStandalone } from './api'
+import {
+  exportTree, getLlmConfig, updateLlmConfig, testLlm,
+  saveLlmProfile, deleteLlmProfile, activateLlmProfile
+} from './api'
 import ChatNode from './components/ChatNode.vue'
 
 const store = useTreeStore()
@@ -158,68 +161,138 @@ async function startFromWelcome() {
   if (root) await store.send(root.nodeId, q)
 }
 
-// ---------- 模型设置 ----------
+// ---------- 模型与密钥管理 ----------
 const llmDialog = ref(false)
-const llmForm = reactive({
-  provider: 'mock',
-  openaiBaseUrl: 'https://api.deepseek.com',
-  openaiApiKey: '',
-  llmModel: 'deepseek-chat',
-  ollamaBaseUrl: 'http://localhost:11434',
-  ollamaModel: 'qwen2.5:7b'
+const llmInfo = reactive({
+  provider: 'mock', profiles: [], activeId: '', activeName: '', hasKey: false, keyMasked: ''
 })
-const llmInfo = reactive({ provider: 'mock', keyMasked: '', hasKey: false })
+const editing = ref(null)          // 新增/编辑中的档案（null = 不显示表单）
+const testingKey = ref('')         // 正在测试的档案 id，或新建表单为 'new'
+const testResults = reactive({})   // { [id|'new']: 测试结果 }
 const llmSaving = ref(false)
-const llmTesting = ref(false)
-const llmTestResult = ref(null)
 
 const providerLabel = { mock: '🧪 演示模式', openai: '☁️ 云端 API', ollama: '🖥️ 本地 Ollama' }
 
+function blankProfile(provider = 'openai') {
+  return {
+    id: '',
+    name: '',
+    provider: provider === 'ollama' ? 'ollama' : 'openai',
+    baseUrl: provider === 'ollama' ? 'http://localhost:11434' : 'https://api.deepseek.com',
+    apiKey: '',
+    model: provider === 'ollama' ? 'qwen2.5:7b' : 'deepseek-chat'
+  }
+}
+
+function applyLlmCfg(cfg) {
+  Object.assign(llmInfo, {
+    provider: cfg.provider,
+    profiles: cfg.profiles || [],
+    activeId: cfg.activeId || '',
+    activeName: cfg.activeName || '',
+    hasKey: cfg.hasKey,
+    keyMasked: cfg.keyMasked || ''
+  })
+}
+
+async function refreshLlm() {
+  try { applyLlmCfg(await getLlmConfig()) } catch (e) { /* ignore */ }
+}
+
 async function openLlmDialog() {
-  llmTestResult.value = null
-  try {
-    const cfg = await getLlmConfig()
-    Object.assign(llmInfo, { provider: cfg.provider, keyMasked: cfg.keyMasked, hasKey: cfg.hasKey })
-    Object.assign(llmForm, {
-      provider: cfg.provider,
-      openaiBaseUrl: cfg.openaiBaseUrl,
-      openaiApiKey: '',
-      llmModel: cfg.llmModel,
-      ollamaBaseUrl: cfg.ollamaBaseUrl,
-      ollamaModel: cfg.ollamaModel
-    })
-  } catch (e) { /* ignore */ }
+  await refreshLlm()
   llmDialog.value = true
 }
 
-async function saveLlmConfig() {
+async function setProvider(p) {
+  try {
+    applyLlmCfg(await updateLlmConfig({ provider: p }))
+    if (p !== 'mock' && !llmInfo.profiles.length) startEdit(blankProfile(p))
+  } catch (e) { ElMessage.error(e.message) }
+}
+
+function startEdit(p) {
+  // 编辑已有档案时不回显密钥，Key 输入留空表示保持不变
+  editing.value = p && p.id
+    ? { ...p, apiKey: '' }
+    : blankProfile(p && p.provider ? p.provider : llmInfo.provider === 'ollama' ? 'ollama' : 'openai')
+  delete testResults['new']
+}
+
+async function saveProfile() {
+  if (!editing.value) return
+  if (!editing.value.name.trim()) {
+    ElMessage.warning('请给这个密钥起个名字，方便区分（例如「DeepSeek 主号」）')
+    return
+  }
   llmSaving.value = true
   try {
-    const patch = { provider: llmForm.provider }
-    if (llmForm.provider === 'openai') {
-      patch.openaiBaseUrl = llmForm.openaiBaseUrl
-      patch.llmModel = llmForm.llmModel
-      if (llmForm.openaiApiKey.trim()) patch.openaiApiKey = llmForm.openaiApiKey.trim()
-    } else if (llmForm.provider === 'ollama') {
-      patch.ollamaBaseUrl = llmForm.ollamaBaseUrl
-      patch.ollamaModel = llmForm.ollamaModel
-    }
-    const cfg = await updateLlmConfig(patch)
-    Object.assign(llmInfo, { provider: cfg.provider, keyMasked: cfg.keyMasked, hasKey: cfg.hasKey })
-    ElMessage.success('模型配置已保存，立即生效')
+    applyLlmCfg(await saveLlmProfile(editing.value))
+    editing.value = null
+    ElMessage.success('密钥已保存并启用')
   } catch (e) {
     ElMessage.error(e.message)
   } finally { llmSaving.value = false }
 }
 
-async function runLlmTest() {
-  llmTesting.value = true
-  llmTestResult.value = null
+async function removeProfile(p) {
   try {
-    llmTestResult.value = await testLlm()
+    await ElMessageBox.confirm(
+      `将删除密钥档案「${p.name}」，删除后使用该密钥的对话将无法继续生成。确认删除？`,
+      '删除密钥', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+    )
+  } catch (e) { return }
+  try {
+    applyLlmCfg(await deleteLlmProfile(p.id))
+    ElMessage.success('已删除')
+  } catch (e) { ElMessage.error(e.message) }
+}
+
+async function useProfile(p) {
+  try {
+    applyLlmCfg(await activateLlmProfile(p.id))
+    ElMessage.success(`已启用「${p.name}」`)
+  } catch (e) { ElMessage.error(e.message) }
+}
+
+async function runTest(key, payload) {
+  testingKey.value = key
+  testResults[key] = null
+  try {
+    testResults[key] = await testLlm(payload)
   } catch (e) {
-    llmTestResult.value = { ok: false, error: e.message }
-  } finally { llmTesting.value = false }
+    testResults[key] = { ok: false, error: e.message }
+  } finally {
+    testingKey.value = ''
+    await refreshLlm()          // 回写「上次测试」状态
+  }
+}
+function testSaved(p) { runTest(p.id, { id: p.id }) }
+function testDraft() { runTest('new', { ...editing.value }) }
+
+/** 一键把该密钥的模型切换成 Key 实际可用的模型 */
+async function pickModel(p, m) {
+  try {
+    applyLlmCfg(await saveLlmProfile({
+      id: p.id, name: p.name, provider: p.provider, baseUrl: p.baseUrl, model: m
+    }))
+    ElMessage.success(`模型已切换为 ${m}`)
+    await runTest(p.id, { id: p.id })
+  } catch (e) { ElMessage.error(e.message) }
+}
+
+function testText(r) {
+  if (!r) return ''
+  if (r.simulated) return r.msg
+  if (r.ok && r.warning) return `⚠️ ${r.msg}`
+  if (r.ok) return `✅ ${r.msg}`
+  return `❌ ${r.error}`
+}
+function testClass(r) {
+  if (!r) return ''
+  if (r.simulated) return 'dim'
+  if (!r.ok) return 'fail'
+  return r.warning ? 'warn' : 'ok'
 }
 
 // ---------- 画布辅助 ----------
@@ -261,6 +334,7 @@ function onKeydown(e) {
 onMounted(() => {
   document.addEventListener('mouseup', onMouseUp)
   document.addEventListener('keydown', onKeydown)
+  refreshLlm()
   store.init().then(() => nextTick(() => fitView({ padding: 0.3, duration: 300 })))
 })
 onBeforeUnmount(() => {
@@ -329,9 +403,9 @@ onBeforeUnmount(() => {
         </template>
       </el-dropdown>
       <div class="tb-divider"></div>
-      <el-tooltip content="配置大模型 / 填入自己的 API Key" placement="bottom">
+      <el-tooltip content="管理多个密钥档案：添加 / 测试 / 切换当前使用的模型" placement="bottom">
         <el-button size="small" :type="llmInfo.provider === 'mock' ? 'warning' : 'success'" plain @click="openLlmDialog">
-          {{ providerLabel[llmInfo.provider] || llmInfo.provider }}
+          {{ llmInfo.provider === 'mock' ? '🧪 演示模式' : (llmInfo.activeName || providerLabel[llmInfo.provider] || llmInfo.provider) }}
         </el-button>
       </el-tooltip>
     </header>
@@ -387,47 +461,119 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <!-- 模型设置对话框 -->
-    <el-dialog v-model="llmDialog" title="⚙️ 模型设置" width="520px">
+    <!-- 模型与密钥管理：可添加多个 Key，随时切换启用 -->
+    <el-dialog v-model="llmDialog" title="⚙️ 模型与密钥管理" width="780px">
       <el-alert v-if="llmInfo.provider === 'mock'" type="warning" :closable="false" show-icon
-        title="当前为演示模式，回答是模拟内容。选择云端 API 并填入自己的 Key 即可接入真实大模型。" style="margin-bottom: 14px;" />
+        title="当前为演示模式，回答是模拟内容。切换到「云端 API」或「本地 Ollama」并添加一个密钥即可接入真实大模型。" style="margin-bottom: 14px;" />
       <div class="mode-title">模型来源</div>
-      <el-radio-group v-model="llmForm.provider" style="margin-bottom: 16px;">
+      <el-radio-group :model-value="llmInfo.provider" style="margin-bottom: 16px;" @change="setProvider">
         <el-radio-button value="mock">演示模式（免 Key）</el-radio-button>
         <el-radio-button value="openai">云端 API</el-radio-button>
         <el-radio-button value="ollama">本地 Ollama</el-radio-button>
       </el-radio-group>
 
-      <template v-if="llmForm.provider === 'openai'">
-        <div class="mode-title">API 地址（OpenAI 兼容协议）</div>
-        <el-input v-model="llmForm.openaiBaseUrl" placeholder="https://api.deepseek.com" style="margin-bottom: 12px;" />
-        <div class="mode-title">API Key</div>
-        <el-input v-model="llmForm.openaiApiKey" type="password" show-password
-          :placeholder="llmInfo.hasKey ? `已保存：${llmInfo.keyMasked}（留空则不修改）` : '粘贴你的 API Key'"
-          style="margin-bottom: 12px;" />
-        <div class="mode-title">模型名称</div>
-        <el-input v-model="llmForm.llmModel" placeholder="deepseek-chat / deepseek-reasoner / douban-..." style="margin-bottom: 6px;" />
-        <div class="mode-desc">兼容 DeepSeek、豆包、通义、OpenAI 等任何 OpenAI 协议端点，改地址和模型名即可。Key 保存在本机后端，不会上传到别处。</div>
+      <template v-if="llmInfo.provider !== 'mock'">
+        <div class="prof-head">
+          <span class="mode-title" style="margin: 0;">密钥档案（{{ llmInfo.profiles.length }}）</span>
+          <el-button size="small" type="primary" plain @click="startEdit(null)">➕ 新增密钥</el-button>
+        </div>
+
+        <div v-if="!llmInfo.profiles.length && !editing" class="prof-empty">
+          还没有密钥档案，点右上角「新增密钥」添加第一个（可添加多个，随时切换）。
+        </div>
+
+        <div
+          v-for="p in llmInfo.profiles" :key="p.id"
+          class="prof-row" :class="{ active: p.id === llmInfo.activeId }"
+        >
+          <div class="prof-main">
+            <div class="prof-name">
+              <span class="prof-dot" :class="{ on: p.id === llmInfo.activeId }"></span>
+              {{ p.name }}
+              <span class="prof-tag">{{ p.provider === 'ollama' ? '本地' : '云端' }}</span>
+              <span v-if="p.id === llmInfo.activeId" class="prof-tag on">启用中</span>
+            </div>
+            <div class="prof-meta">{{ p.baseUrl }} · 模型 {{ p.model }} · Key {{ p.keyMasked || '未填写' }}</div>
+            <div v-if="p.lastTest" class="prof-test" :class="p.lastTest.ok ? 'ok' : 'fail'">
+              {{ p.lastTest.ok ? '✅' : '❌' }} {{ p.lastTest.msg }}
+              <span class="prof-ts">{{ p.lastTest.ts }}</span>
+            </div>
+            <div v-else class="prof-test dim">尚未测试</div>
+            <div v-if="p.lastTest?.models?.length && !p.lastTest.models.includes(p.model)" class="model-chips">
+              <span class="chips-label">该 Key 可用模型（点击切换）：</span>
+              <el-tag
+                v-for="m in p.lastTest.models" :key="m"
+                size="small" class="model-chip" effect="plain" @click="pickModel(p, m)"
+              >{{ m }}</el-tag>
+            </div>
+          </div>
+          <div class="prof-ops">
+            <el-button v-if="p.id !== llmInfo.activeId" size="small" @click="useProfile(p)">启用</el-button>
+            <el-button size="small" :loading="testingKey === p.id" @click="testSaved(p)">测试</el-button>
+            <el-button size="small" @click="startEdit(p)">编辑</el-button>
+            <el-button size="small" type="danger" plain @click="removeProfile(p)">删除</el-button>
+          </div>
+        </div>
+
+        <!-- 新增 / 编辑表单 -->
+        <div v-if="editing" class="prof-form">
+          <div class="mode-title">{{ editing.id ? '编辑密钥档案' : '新增密钥档案' }}</div>
+          <div class="form-row">
+            <span class="form-label">名称</span>
+            <el-input v-model="editing.name" size="small" placeholder="例如：DeepSeek 主号 / 豆包备用" />
+          </div>
+          <div class="form-row">
+            <span class="form-label">类型</span>
+            <el-radio-group v-model="editing.provider" size="small">
+              <el-radio-button value="openai">云端 API</el-radio-button>
+              <el-radio-button value="ollama">本地 Ollama</el-radio-button>
+            </el-radio-group>
+          </div>
+          <div class="form-row">
+            <span class="form-label">地址</span>
+            <el-input v-model="editing.baseUrl" size="small"
+              :placeholder="editing.provider === 'ollama' ? 'http://localhost:11434' : 'https://api.deepseek.com'" />
+          </div>
+          <div class="form-row">
+            <span class="form-label">API Key</span>
+            <el-input v-model="editing.apiKey" size="small" type="password" show-password
+              :placeholder="editing.id && llmInfo.profiles.find(x => x.id === editing.id)?.keyMasked
+                ? `已保存：${llmInfo.profiles.find(x => x.id === editing.id).keyMasked}（留空则不修改）`
+                : '粘贴你的 API Key'" />
+          </div>
+          <div class="form-row">
+            <span class="form-label">模型</span>
+            <el-input v-model="editing.model" size="small"
+              :placeholder="editing.provider === 'ollama' ? 'qwen2.5:7b' : 'deepseek-chat'" />
+          </div>
+          <div class="mode-desc">
+            兼容 DeepSeek、豆包、通义、OpenAI 等任何 OpenAI 协议端点，改地址和模型名即可。
+            密钥只保存在本机，不会上传到别处。
+          </div>
+          <div class="prof-form-ops">
+            <el-button size="small" :loading="testingKey === 'new'" @click="testDraft">测试连接</el-button>
+            <el-button size="small" type="primary" :loading="llmSaving" @click="saveProfile">保存并启用</el-button>
+            <el-button size="small" @click="editing = null">取消</el-button>
+          </div>
+          <div v-if="testResults['new']" class="llm-test-result" :class="testClass(testResults['new'])">
+            {{ testText(testResults['new']) }}
+          </div>
+          <div v-if="testResults['new']?.models?.length" class="model-chips">
+            <span class="chips-label">该 Key 可用模型（点击填入）：</span>
+            <el-tag
+              v-for="m in testResults['new'].models" :key="m"
+              size="small" class="model-chip" effect="plain" @click="editing.model = m"
+            >{{ m }}</el-tag>
+          </div>
+        </div>
       </template>
 
-      <template v-if="llmForm.provider === 'ollama'">
-        <div class="mode-title">Ollama 地址</div>
-        <el-input v-model="llmForm.ollamaBaseUrl" placeholder="http://localhost:11434" style="margin-bottom: 12px;" />
-        <div class="mode-title">模型名称</div>
-        <el-input v-model="llmForm.ollamaModel" placeholder="qwen2.5:7b" />
-      </template>
-
-      <template v-if="llmForm.provider === 'mock'">
+      <template v-if="llmInfo.provider === 'mock'">
         <div class="mode-desc">演示模式无需任何配置，回答为模拟内容，用于体验划选分支等完整交互。</div>
       </template>
 
-      <div v-if="llmTestResult" class="llm-test-result" :class="llmTestResult.ok ? 'ok' : 'fail'">
-        {{ llmTestResult.ok ? `✅ 连接成功，模型返回：${llmTestResult.sample}` : `❌ ${llmTestResult.error}` }}
-      </div>
-
       <template #footer>
-        <el-button :loading="llmTesting" @click="runLlmTest">测试连接</el-button>
-        <el-button type="primary" :loading="llmSaving" @click="saveLlmConfig">保存</el-button>
+        <el-button @click="llmDialog = false">关闭</el-button>
       </template>
     </el-dialog>
   </div>

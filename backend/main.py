@@ -304,9 +304,26 @@ def llm_config_update(body: dict):
     return llm_client.update_config(body or {})
 
 
+@app.post("/api/llm/profile")
+def llm_profile_save(body: dict):
+    """新增或更新一个密钥档案（保存后自动启用）。"""
+    return llm_client.save_profile(body or {})
+
+
+@app.delete("/api/llm/profile/{pid}")
+def llm_profile_delete(pid: str):
+    return llm_client.delete_profile(pid)
+
+
+@app.post("/api/llm/profile/{pid}/activate")
+def llm_profile_activate(pid: str):
+    return llm_client.activate_profile(pid)
+
+
 @app.post("/api/llm/test")
-async def llm_config_test():
-    return await llm_client.test_connection()
+async def llm_config_test(body: dict = None):
+    """真实连通性测试：可测已保存档案（传 id），也可测未保存的表单内容。"""
+    return await llm_client.test_profile(body or {})
 
 
 # ---------------- 导出 ----------------

@@ -16,11 +16,102 @@ const SYSTEM_PROMPT =
 
 const DEFAULT_CFG = {
   provider: 'mock',
+  profiles: [],
+  activeId: null,
   openaiBaseUrl: 'https://api.deepseek.com',
   openaiApiKey: '',
   llmModel: 'deepseek-chat',
   ollamaBaseUrl: 'http://localhost:11434',
   ollamaModel: 'qwen2.5:7b'
+}
+const DEFAULT_BASE = { openai: 'https://api.deepseek.com', ollama: 'http://localhost:11434' }
+const DEFAULT_MODEL = { openai: 'deepseek-chat', ollama: 'qwen2.5:7b' }
+
+// ---------------- 密钥档案工具 ----------------
+
+function maskKey(key) {
+  if (!key) return ''
+  return key.length > 8 ? `${key.slice(0, 4)}****${key.slice(-4)}` : '****'
+}
+
+function normalizeProfile(raw) {
+  const r = raw || {}
+  let provider = String(r.provider || 'openai').trim().toLowerCase()
+  if (provider !== 'ollama') provider = 'openai'
+  return {
+    id: r.id || uid(),
+    name: String(r.name || '').trim() || '未命名密钥',
+    provider,
+    baseUrl: String(r.baseUrl || DEFAULT_BASE[provider]).trim().replace(/\/+$/, ''),
+    apiKey: String(r.apiKey || '').trim(),
+    model: String(r.model || DEFAULT_MODEL[provider]).trim(),
+    lastTest: r.lastTest && typeof r.lastTest === 'object' ? r.lastTest : null
+  }
+}
+
+function publicProfile(p) {
+  return {
+    id: p.id, name: p.name, provider: p.provider,
+    baseUrl: p.baseUrl, model: p.model,
+    hasKey: !!p.apiKey, keyMasked: maskKey(p.apiKey),
+    lastTest: p.lastTest || null
+  }
+}
+
+function rawCfg() {
+  let cfg = {}
+  try { cfg = JSON.parse(localStorage.getItem(CFG_KEY) || '{}') } catch (e) { cfg = {} }
+  return { ...DEFAULT_CFG, ...cfg }
+}
+
+function saveRaw(cfg) {
+  localStorage.setItem(CFG_KEY, JSON.stringify(cfg))
+  return cfg
+}
+
+/** 旧版「单一配置」自动迁移为第一个密钥档案 */
+function migrateCfg(cfg) {
+  if (Array.isArray(cfg.profiles) && cfg.profiles.length) return cfg
+  const profiles = []
+  if (cfg.openaiApiKey) {
+    profiles.push(normalizeProfile({
+      name: '云端模型（原有配置）',
+      provider: 'openai',
+      baseUrl: cfg.openaiBaseUrl,
+      apiKey: cfg.openaiApiKey,
+      model: cfg.llmModel
+    }))
+  }
+  if (cfg.provider === 'ollama' || cfg.ollamaBaseUrl) {
+    profiles.push(normalizeProfile({
+      name: '本地 Ollama（原有配置）',
+      provider: 'ollama',
+      baseUrl: cfg.ollamaBaseUrl,
+      model: cfg.ollamaModel
+    }))
+  }
+  cfg.profiles = profiles
+  cfg.activeId = profiles.length ? profiles[0].id : null
+  return cfg
+}
+
+function activeProfile(cfg) {
+  return cfg.profiles.find((p) => p.id === cfg.activeId) || cfg.profiles[0] || null
+}
+
+/** 供对话调用：把启用中的档案展开成旧的扁平字段 */
+function effectiveCfg() {
+  const cfg = migrateCfg(rawCfg())
+  const active = activeProfile(cfg)
+  if (active && active.provider === 'openai') {
+    cfg.openaiBaseUrl = active.baseUrl
+    cfg.openaiApiKey = active.apiKey
+    cfg.llmModel = active.model
+  } else if (active && active.provider === 'ollama') {
+    cfg.ollamaBaseUrl = active.baseUrl
+    cfg.ollamaModel = active.model
+  }
+  return cfg
 }
 
 // ---------------- 基础工具 ----------------
@@ -226,47 +317,164 @@ export async function exportTree(treeId, format) {
 // ---------------- 模型配置 ----------------
 
 export function getLlmConfig() {
-  let cfg = {}
-  try { cfg = JSON.parse(localStorage.getItem(CFG_KEY) || '{}') } catch (e) { cfg = {} }
-  const merged = { ...DEFAULT_CFG, ...cfg }
-  const key = merged.openaiApiKey || ''
+  let cfg = migrateCfg(rawCfg())
+  const active = activeProfile(cfg)
   return {
-    provider: merged.provider,
-    openaiBaseUrl: merged.openaiBaseUrl,
-    llmModel: merged.llmModel,
-    ollamaBaseUrl: merged.ollamaBaseUrl,
-    ollamaModel: merged.ollamaModel,
-    hasKey: !!key,
-    keyMasked: key ? (key.length > 8 ? `${key.slice(0, 4)}****${key.slice(-4)}` : '****') : ''
+    provider: cfg.provider,
+    profiles: cfg.profiles.map(publicProfile),
+    activeId: cfg.activeId,
+    activeName: active ? active.name : '',
+    hasKey: !!(active && active.apiKey),
+    keyMasked: maskKey(active ? active.apiKey : ''),
+    openaiBaseUrl: cfg.openaiBaseUrl,
+    llmModel: cfg.llmModel,
+    ollamaBaseUrl: cfg.ollamaBaseUrl,
+    ollamaModel: cfg.ollamaModel
   }
 }
 
 export function updateLlmConfig(patch) {
-  let cfg = {}
-  try { cfg = JSON.parse(localStorage.getItem(CFG_KEY) || '{}') } catch (e) { cfg = {} }
-  const merged = { ...DEFAULT_CFG, ...cfg }
+  const cfg = migrateCfg(rawCfg())
   for (const k of Object.keys(DEFAULT_CFG)) {
-    if (patch[k] != null) merged[k] = String(patch[k]).trim()
+    if (patch[k] != null) cfg[k] = String(patch[k]).trim()
   }
-  if (!['mock', 'openai', 'ollama'].includes(merged.provider)) merged.provider = 'mock'
-  localStorage.setItem(CFG_KEY, JSON.stringify(merged))
+  if (!['mock', 'openai', 'ollama'].includes(cfg.provider)) cfg.provider = 'mock'
+  saveRaw(cfg)
   return getLlmConfig()
 }
 
-function fullConfig() {
-  let cfg = {}
-  try { cfg = JSON.parse(localStorage.getItem(CFG_KEY) || '{}') } catch (e) { cfg = {} }
-  return { ...DEFAULT_CFG, ...cfg }
+export function saveLlmProfile(payload) {
+  const cfg = migrateCfg(rawCfg())
+  const p = normalizeProfile(payload)
+  const idx = cfg.profiles.findIndex((x) => x.id === p.id)
+  if (idx >= 0) {
+    if (!p.apiKey) p.apiKey = cfg.profiles[idx].apiKey // Key 留空表示沿用原值
+    cfg.profiles[idx] = p
+  } else {
+    cfg.profiles.push(p)
+  }
+  cfg.activeId = p.id
+  cfg.provider = p.provider
+  saveRaw(cfg)
+  return getLlmConfig()
 }
 
-export async function testLlm() {
-  try {
-    let sample = ''
-    await streamChat([{ role: 'user', content: '请只回复两个字：成功' }], (c) => { sample += c })
-    return { ok: true, sample: sample.slice(0, 60) }
-  } catch (e) {
-    return { ok: false, error: e.message }
+export function deleteLlmProfile(id) {
+  const cfg = migrateCfg(rawCfg())
+  cfg.profiles = cfg.profiles.filter((p) => p.id !== id)
+  if (cfg.activeId === id) {
+    cfg.activeId = cfg.profiles.length ? cfg.profiles[0].id : null
+    cfg.provider = cfg.profiles.length ? cfg.profiles[0].provider : 'mock'
   }
+  saveRaw(cfg)
+  return getLlmConfig()
+}
+
+export function activateLlmProfile(id) {
+  const cfg = migrateCfg(rawCfg())
+  const p = cfg.profiles.find((x) => x.id === id)
+  if (p) {
+    cfg.activeId = id
+    cfg.provider = p.provider
+    saveRaw(cfg)
+  }
+  return getLlmConfig()
+}
+
+/** 真实连通性测试：验证地址可达、Key 有效、模型可用（浏览器直连） */
+export async function testLlm(payload = {}) {
+  const cfg = migrateCfg(rawCfg())
+  let p = payload.id ? cfg.profiles.find((x) => x.id === payload.id) : null
+  if (!p) {
+    p = normalizeProfile({
+      provider: payload.provider || cfg.provider || 'openai',
+      baseUrl: payload.baseUrl,
+      apiKey: payload.apiKey,
+      model: payload.model
+    })
+  }
+  if (payload.apiKey) p = { ...p, apiKey: payload.apiKey }
+  if (p.provider === 'mock' || (!payload.id && !payload.provider && cfg.provider === 'mock')) {
+    return { ok: true, simulated: true, msg: '演示模式不会发起真实请求，无需测试连接' }
+  }
+  let result
+  try {
+    result = p.provider === 'ollama' ? await testOllama(p) : await testOpenAI(p)
+  } catch (e) {
+    result = { ok: false, error: corsHint(e) }
+  }
+  if (payload.id) {
+    const target = cfg.profiles.find((x) => x.id === payload.id)
+    if (target) {
+      target.lastTest = {
+        ok: !!result.ok,
+        msg: result.msg || result.error || '',
+        ts: now(),
+        models: (result.models || []).slice(0, 12)
+      }
+      saveRaw(cfg)
+    }
+  }
+  return result
+}
+
+async function testOpenAI(p) {
+  if (!p.apiKey) return { ok: false, error: '未填写 API Key，无法测试' }
+  const base = (p.baseUrl || '').replace(/\/+$/, '')
+  const headers = { Authorization: `Bearer ${p.apiKey}` }
+  const t0 = performance.now()
+  let r = null
+  try { r = await fetch(`${base}/models`, { headers }) } catch (e) { r = null }
+  if (r) {
+    if (r.status === 401 || r.status === 403) {
+      return { ok: false, error: `鉴权失败（${r.status}）：API Key 无效、已过期或无权限` }
+    }
+    if (r.ok) {
+      let ids = []
+      try { ids = ((await r.json()).data || []).map((m) => m.id).filter(Boolean) } catch (e) { ids = [] }
+      const ms = Math.round(performance.now() - t0)
+      if (ids.length) {
+        if (!ids.includes(p.model)) {
+          return { ok: true, warning: true, latency: ms, models: ids.slice(0, 30),
+            msg: `Key 有效（延迟 ${ms}ms，可访问 ${ids.length} 个模型），但列表里没有「${p.model}」，请核对模型名` }
+        }
+        return { ok: true, latency: ms, models: ids.slice(0, 30),
+          msg: `Key 有效 · 延迟 ${ms}ms · 可访问 ${ids.length} 个模型 · 「${p.model}」可用` }
+      }
+      return { ok: true, latency: ms, msg: `Key 有效 · 延迟 ${ms}ms` }
+    }
+  }
+  const resp = await fetch(`${base}/chat/completions`, {
+    method: 'POST',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: p.model, messages: [{ role: 'user', content: 'ping' }], max_tokens: 1, stream: false })
+  })
+  const ms = Math.round(performance.now() - t0)
+  if (resp.status === 401 || resp.status === 403) {
+    return { ok: false, error: `鉴权失败（${resp.status}）：API Key 无效或无权访问该模型` }
+  }
+  if (!resp.ok) return { ok: false, error: `请求失败（${resp.status}）${(await resp.text()).slice(0, 200)}` }
+  let used = p.model
+  try { used = (await resp.json()).model || p.model } catch (e) { /* ignore */ }
+  return { ok: true, latency: ms, msg: `连接成功 · 延迟 ${ms}ms · 模型 ${used} 已响应` }
+}
+
+async function testOllama(p) {
+  const base = (p.baseUrl || '').replace(/\/+$/, '')
+  const t0 = performance.now()
+  const resp = await fetch(`${base}/api/tags`)
+  if (!resp.ok) {
+    return { ok: false, error: `Ollama 返回 ${resp.status}：${(await resp.text()).slice(0, 150)}` }
+  }
+  let names = []
+  try { names = ((await resp.json()).models || []).map((m) => m.name).filter(Boolean) } catch (e) { names = [] }
+  const ms = Math.round(performance.now() - t0)
+  if (names.length && !names.some((n) => n === p.model || n.split(':')[0] === p.model.split(':')[0])) {
+    return { ok: true, warning: true, latency: ms, models: names.slice(0, 30),
+      msg: `Ollama 已连接（延迟 ${ms}ms，本地 ${names.length} 个模型），但没有「${p.model}」，请先执行 ollama pull ${p.model}` }
+  }
+  return { ok: true, latency: ms, models: names.slice(0, 30),
+    msg: `Ollama 已连接 · 延迟 ${ms}ms · 模型「${p.model}」${names.length ? '可用' : '（本地模型列表为空）'}` }
 }
 
 // ---------------- 大模型调用（浏览器直连） ----------------
@@ -377,7 +585,7 @@ async function streamMock(messages, onDelta) {
 }
 
 async function streamChat(messages, onDelta) {
-  const cfg = fullConfig()
+  const cfg = effectiveCfg()
   try {
     if (cfg.provider === 'openai') return await streamOpenAI(messages, cfg, onDelta)
     if (cfg.provider === 'ollama') return await streamOllama(messages, cfg, onDelta)
