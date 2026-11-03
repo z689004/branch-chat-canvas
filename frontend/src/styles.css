@@ -50,24 +50,31 @@ body {
 }
 .chat-node.resizing { transition: none; box-shadow: 0 10px 30px rgba(22, 93, 255, 0.22); }
 
-/* ---------- 卡片尺寸拖拽手柄 ---------- */
+/* ---------- 卡片尺寸拖拽手柄（八向：四边 + 四角） ---------- */
 .rs-handle { position: absolute; z-index: 6; }
-.rs-right {
-  top: 0; right: 0; width: 7px; height: 100%; cursor: ew-resize;
+/* 四条边：9px 感应带 */
+.rs-n { top: 0; left: 10px; right: 10px; height: 9px; cursor: ns-resize; }
+.rs-s { bottom: 0; left: 10px; right: 10px; height: 9px; cursor: ns-resize; }
+.rs-e { right: 0; top: 10px; bottom: 10px; width: 9px; cursor: ew-resize; }
+.rs-w { left: 0; top: 10px; bottom: 10px; width: 9px; cursor: ew-resize; }
+/* 四个角：18px 方块，带常驻抓手标记 */
+.rs-nw, .rs-ne, .rs-sw, .rs-se { width: 18px; height: 18px; }
+.rs-nw { top: 0; left: 0; cursor: nwse-resize; }
+.rs-ne { top: 0; right: 0; cursor: nesw-resize; }
+.rs-sw { bottom: 0; left: 0; cursor: nesw-resize; }
+.rs-se { bottom: 0; right: 0; cursor: nwse-resize; }
+.rs-nw::after, .rs-ne::after, .rs-sw::after, .rs-se::after {
+  content: ''; position: absolute; width: 8px; height: 8px;
+  border: 2px solid #c0c6cf; border-radius: 1px; opacity: 0.9;
 }
-.rs-bottom {
-  left: 0; right: 16px; bottom: 0; height: 7px; cursor: ns-resize;
-}
-.rs-corner {
-  right: 0; bottom: 0; width: 18px; height: 18px; cursor: nwse-resize;
-}
-.rs-corner::after {
-  content: ''; position: absolute; right: 4px; bottom: 4px;
-  width: 8px; height: 8px; border-radius: 1px;
-  border-right: 2px solid #c0c6cf; border-bottom: 2px solid #c0c6cf;
-}
-.rs-right:hover, .rs-bottom:hover { background: rgba(22, 93, 255, 0.28); }
-.rs-corner:hover::after { border-color: #165dff; }
+.rs-se::after { right: 4px; bottom: 4px; border-left: none; border-top: none; }
+.rs-sw::after { left: 4px; bottom: 4px; border-right: none; border-top: none; }
+.rs-ne::after { right: 4px; top: 4px; border-left: none; border-bottom: none; }
+.rs-nw::after { left: 4px; top: 4px; border-right: none; border-bottom: none; }
+/* 悬停高亮：边变蓝、抓手变蓝 */
+.rs-handle:hover { background: rgba(22, 93, 255, 0.18); }
+.rs-nw:hover::after, .rs-ne:hover::after,
+.rs-sw:hover::after, .rs-se:hover::after { border-color: #165dff; }
 .chat-node:hover { box-shadow: 0 8px 24px rgba(31, 35, 41, 0.14); }
 .chat-node.collapsed { width: 300px; }
 .chat-node.collapsed .messages,

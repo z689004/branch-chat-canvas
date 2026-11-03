@@ -80,8 +80,20 @@ const DEFAULT_W = 340, DEFAULT_H = 380
 const MIN_W = 260, MIN_H = 240, MAX_W = 1200, MAX_H = 1600
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v))
 
+// 八向：四条边 + 四个角，dir 由 n/s/e/w 组合而成
+const RESIZE_DIRS = [
+  { dir: 'n', title: '拖动调整高度' },
+  { dir: 's', title: '拖动调整高度' },
+  { dir: 'e', title: '拖动调整宽度' },
+  { dir: 'w', title: '拖动调整宽度' },
+  { dir: 'ne', title: '拖动调整大小' },
+  { dir: 'nw', title: '拖动调整大小' },
+  { dir: 'se', title: '拖动调整大小' },
+  { dir: 'sw', title: '拖动调整大小' },
+]
+
 const resizing = ref(false)
-const liveSize = ref(null)                       // 拖拽过程中的临时尺寸
+const liveSize = ref(null)                       // 拖拽过程中的临时尺寸（含 x/y）
 const savedSize = computed(() => {
   const s = node.value?.size
   return {
@@ -91,21 +103,36 @@ const savedSize = computed(() => {
 })
 const cardSize = computed(() => liveSize.value || savedSize.value)
 
-function startResize(e, mode) {
+function startResize(e, dir) {
   e.stopPropagation()
   e.preventDefault()
   const zoom = viewport?.value?.zoom || 1        // 画布缩放：屏幕位移需换算为节点位移
   const startX = e.clientX, startY = e.clientY
-  const base = { ...cardSize.value }
+  const base = { ...cardSize.value, x: node.value?.x || 0, y: node.value?.y || 0 }
   resizing.value = true
 
   const onMove = (ev) => {
     const dx = (ev.clientX - startX) / zoom
     const dy = (ev.clientY - startY) / zoom
-    const next = { ...base }
-    if (mode !== 'h') next.w = clamp(base.w + dx, MIN_W, MAX_W)
-    if (mode !== 'w') next.h = clamp(base.h + dy, MIN_H, MAX_H)
-    liveSize.value = next
+    let { w, h, x, y } = base
+
+    if (dir.includes('e')) w = clamp(base.w + dx, MIN_W, MAX_W)
+    if (dir.includes('s')) h = clamp(base.h + dy, MIN_H, MAX_H)
+    if (dir.includes('w')) {                     // 拖左边：宽度变，右边界保持不动
+      const nw = clamp(base.w - dx, MIN_W, MAX_W)
+      x = base.x + (base.w - nw)
+      w = nw
+    }
+    if (dir.includes('n')) {                     // 拖上边：高度变，下边界保持不动
+      const nh = clamp(base.h - dy, MIN_H, MAX_H)
+      y = base.y + (base.h - nh)
+      h = nh
+    }
+    liveSize.value = { w, h, x, y }
+
+    // 拖动左/上边时同步移动节点位置（仅本地，松手才写库）
+    const n = node.value
+    if (n && (n.x !== x || n.y !== y)) { n.x = x; n.y = y }
   }
   const onUp = () => {
     document.removeEventListener('mousemove', onMove)
@@ -113,9 +140,18 @@ function startResize(e, mode) {
     resizing.value = false
     const next = liveSize.value
     liveSize.value = null
-    if (next && (Math.round(next.w) !== Math.round(base.w) || Math.round(next.h) !== Math.round(base.h))) {
-      store.patchNode(props.nodeId, { size: { w: Math.round(next.w), h: Math.round(next.h) } })
+    if (!next) return
+    const patch = {
+      size: { w: Math.round(next.w), h: Math.round(next.h) },
     }
+    if (dir.includes('w') || dir.includes('n')) {
+      patch.x = Math.round(next.x)
+      patch.y = Math.round(next.y)
+    }
+    const changed = Math.round(next.w) !== Math.round(base.w)
+      || Math.round(next.h) !== Math.round(base.h)
+      || (patch.x !== undefined && (Math.round(next.x) !== Math.round(base.x) || Math.round(next.y) !== Math.round(base.y)))
+    if (changed) store.patchNode(props.nodeId, patch)
   }
   document.addEventListener('mousemove', onMove)
   document.addEventListener('mouseup', onUp)
@@ -220,11 +256,16 @@ watch(
       <el-button type="primary" :loading="sending" class="send-btn" @click="send">发送</el-button>
     </div>
 
-    <!-- 拖拽调整卡片尺寸：右边调宽、下边调高、右下角同时调整 -->
+    <!-- 拖拽调整卡片尺寸：四条边 + 四个角，任意方向自由缩放 -->
     <template v-if="!node.isCollapsed">
-      <div class="rs-handle rs-right nodrag" title="拖动调整宽度" @mousedown.stop.prevent="startResize($event, 'w')"></div>
-      <div class="rs-handle rs-bottom nodrag" title="拖动调整高度" @mousedown.stop.prevent="startResize($event, 'h')"></div>
-      <div class="rs-handle rs-corner nodrag" title="拖动调整大小" @mousedown.stop.prevent="startResize($event, 'both')"></div>
+      <div
+        v-for="h in RESIZE_DIRS"
+        :key="h.dir"
+        class="rs-handle nodrag"
+        :class="'rs-' + h.dir"
+        :title="h.title"
+        @mousedown.stop.prevent="startResize($event, h.dir)"
+      ></div>
     </template>
   </div>
 </template>
