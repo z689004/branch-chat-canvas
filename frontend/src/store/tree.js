@@ -1,10 +1,14 @@
 import { defineStore } from 'pinia'
 import {
   listTrees, createTree, getTree, createChildNode,
-  updateNodeApi, deleteNodeApi, deleteTreeApi, renameTreeApi, sendQuestionStream
+  updateNodeApi, deleteNodeApi, deleteTreeApi, renameTreeApi, sendQuestionStream,
+  duplicateNode, saveTreeSnapshot
 } from '../api'
 
 const LAST_TREE_KEY = 'bcc:lastTreeId'
+const HISTORY_LIMIT = 40
+
+const clone = (v) => JSON.parse(JSON.stringify(v))
 
 export const useTreeStore = defineStore('tree', {
   state: () => ({
@@ -13,7 +17,14 @@ export const useTreeStore = defineStore('tree', {
     nodes: [],
     treeList: [],
     streamingNodeIds: [],
-    loaded: false
+    loaded: false,
+    // 保存状态：saved 已保存 / unsaved 未保存（有改动待落库）
+    saveStatus: 'saved',
+    lastSavedAt: '',
+    pending: 0,
+    // 撤销 / 重做历史（整树快照）
+    past: [],
+    future: []
   }),
 
   getters: {
@@ -39,10 +50,77 @@ export const useTreeStore = defineStore('tree', {
       }
       this.roots.forEach(r => walk(r.nodeId))
       return this.nodes.filter(n => vis.has(n.nodeId))
+    },
+    canUndo: (s) => s.past.length > 0,
+    canRedo: (s) => s.future.length > 0,
+    /** 收集某节点的整棵子树 id（含自身） */
+    subtreeIds: (s) => (nodeId) => {
+      const ids = new Set([nodeId])
+      let changed = true
+      while (changed) {
+        changed = false
+        for (const n of s.nodes) {
+          if (ids.has(n.parentId) && !ids.has(n.nodeId)) { ids.add(n.nodeId); changed = true }
+        }
+      }
+      return [...ids]
     }
   },
 
   actions: {
+    // ---------- 保存状态 / 撤销重做基础 ----------
+    touch() {
+      this.pending += 1
+      this.saveStatus = 'unsaved'
+    },
+    settled() {
+      this.pending = Math.max(0, this.pending - 1)
+      if (this.pending === 0) {
+        this.saveStatus = 'saved'
+        const d = new Date()
+        const p = (n) => String(n).padStart(2, '0')
+        this.lastSavedAt = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+      }
+    },
+    snapshot() {
+      return { title: this.treeTitle, nodeList: clone(this.nodes) }
+    },
+    /** 在任何改动之前调用：把当前状态压入撤销栈 */
+    commit() {
+      if (!this.treeId) return
+      this.past.push(this.snapshot())
+      if (this.past.length > HISTORY_LIMIT) this.past.shift()
+      this.future = []
+    },
+    async applySnapshot(snap, { persist = true } = {}) {
+      this.nodes = clone(snap.nodeList || [])
+      if (snap.title != null) this.treeTitle = snap.title
+      if (!persist) return
+      this.touch()
+      try {
+        await saveTreeSnapshot({ treeId: this.treeId, title: this.treeTitle, nodeList: this.nodes })
+        await this.refreshTreeList()
+      } catch (e) {
+        console.warn('快照落库失败', e)
+      } finally {
+        this.settled()
+      }
+    },
+    async undo() {
+      if (!this.past.length) return false
+      this.future.push(this.snapshot())
+      const snap = this.past.pop()
+      await this.applySnapshot(snap)
+      return true
+    },
+    async redo() {
+      if (!this.future.length) return false
+      this.past.push(this.snapshot())
+      const snap = this.future.pop()
+      await this.applySnapshot(snap)
+      return true
+    },
+
     // ---------- 画布级 ----------
     async refreshTreeList() {
       try { this.treeList = await listTrees() } catch (e) { this.treeList = [] }
@@ -62,6 +140,10 @@ export const useTreeStore = defineStore('tree', {
       this.treeId = tree.treeId
       this.treeTitle = tree.title
       this.nodes = tree.nodeList
+      this.past = []
+      this.future = []
+      this.saveStatus = 'saved'
+      this.lastSavedAt = ''
       localStorage.setItem(LAST_TREE_KEY, tree.treeId)
       await this.refreshTreeList()
     },
@@ -78,20 +160,28 @@ export const useTreeStore = defineStore('tree', {
 
     // ---------- 节点级 ----------
     async createChild(parentId, selectedContext, contextMode = 'simple', title = null) {
-      const child = await createChildNode({
-        treeId: this.treeId, parentId, selectedContext, contextMode, title
-      })
-      this.nodes.push(child)
-      return child
+      this.commit()
+      this.touch()
+      try {
+        const child = await createChildNode({
+          treeId: this.treeId, parentId, selectedContext, contextMode, title
+        })
+        this.nodes.push(child)
+        return child
+      } finally {
+        this.settled()
+      }
     },
 
     async send(nodeId, content) {
       const node = this.nodeMap[nodeId]
       if (!node) return
+      this.commit()
       node.messages.push({ role: 'user', content })
       const assistantMsg = { role: 'assistant', content: '' }
       node.messages.push(assistantMsg)
       this.streamingNodeIds.push(nodeId)
+      this.touch()
       try {
         const answer = await sendQuestionStream(this.treeId, nodeId, content, (chunk) => {
           assistantMsg.content += chunk
@@ -104,20 +194,29 @@ export const useTreeStore = defineStore('tree', {
           node.title = freshNode.title
           node.messages = freshNode.messages
         }
+        await this.refreshTreeList()
       } catch (e) {
         assistantMsg.content = `⚠️ ${e.message}`
       } finally {
         this.streamingNodeIds = this.streamingNodeIds.filter(id => id !== nodeId)
+        this.settled()
       }
     },
 
     async patchNode(nodeId, patch) {
       const node = this.nodeMap[nodeId]
-      if (node) Object.assign(node, patch)
+      if (!node) return
+      // 仅结构性 / 视觉性变更进入撤销栈，避免流式输入刷屏
+      const structural = ['title', 'isCollapsed', 'contextMode', 'starred', 'size'].some(k => k in patch)
+      if (structural) this.commit()
+      Object.assign(node, patch)
+      this.touch()
       try {
         await updateNodeApi({ treeId: this.treeId, nodeId, ...patch })
       } catch (e) {
         console.warn('节点更新保存失败', e)
+      } finally {
+        this.settled()
       }
     },
 
@@ -128,13 +227,14 @@ export const useTreeStore = defineStore('tree', {
         const node = this.nodeMap[nodeId]
         if (node) { node.x = pos.x; node.y = pos.y }
         pending[nodeId] = pos
+        this.touch()
         clearTimeout(timer)
         timer = setTimeout(() => {
-          for (const [id, p] of Object.entries(pending)) {
-            updateNodeApi({ treeId: this.treeId, nodeId: id, x: p.x, y: p.y })
-              .catch(() => {})
-          }
+          const jobs = Object.entries(pending).map(([id, p]) =>
+            updateNodeApi({ treeId: this.treeId, nodeId: id, x: p.x, y: p.y }).catch(() => {})
+          )
           Object.keys(pending).forEach(k => delete pending[k])
+          Promise.all(jobs).then(() => { this.settled() })
         }, 400)
       }
     })(),
@@ -151,9 +251,86 @@ export const useTreeStore = defineStore('tree', {
           }
         }
       }
+      this.commit()
+      this.touch()
       try { await deleteNodeApi(this.treeId, nodeId) } catch (e) { console.warn(e) }
       this.nodes = this.nodes.filter(n => !doomed.has(n.nodeId))
+      this.settled()
       return doomed.size
+    },
+
+    /** 批量删除：自动跳过「祖先也在选中集合里」的节点 */
+    async removeNodes(ids) {
+      const set = new Set(ids)
+      const topLevel = ids.filter(id => {
+        const n = this.nodeMap[id]
+        return n && !set.has(n.parentId)
+      })
+      if (!topLevel.length) return 0
+      this.commit()
+      this.touch()
+      let removed = 0
+      try {
+        for (const id of topLevel) {
+          try {
+            const r = await deleteNodeApi(this.treeId, id)
+            removed += (r && r.deleted) || 1
+          } catch (e) { console.warn(e) }
+        }
+        const fresh = await getTree(this.treeId)
+        this.nodes = fresh.nodeList
+        await this.refreshTreeList()
+      } finally {
+        this.settled()
+      }
+      return removed
+    },
+
+    /** 复制节点：withSubtree=true 时连同整条分支一起复制 */
+    async duplicate(nodeId, withSubtree = false) {
+      this.commit()
+      this.touch()
+      try {
+        const res = await duplicateNode({ treeId: this.treeId, nodeId, withSubtree })
+        if (res && Array.isArray(res.nodeList)) this.nodes = res.nodeList
+        else {
+          const fresh = await getTree(this.treeId)
+          this.nodes = fresh.nodeList
+        }
+        await this.refreshTreeList()
+        return res && res.nodeId
+      } finally {
+        this.settled()
+      }
+    },
+
+    async duplicateMany(ids, withSubtree = false) {
+      const set = new Set(ids)
+      const topLevel = ids.filter(id => {
+        const n = this.nodeMap[id]
+        return n && !set.has(n.parentId)
+      })
+      if (!topLevel.length) return 0
+      this.commit()
+      this.touch()
+      try {
+        for (const id of topLevel) {
+          try { await duplicateNode({ treeId: this.treeId, nodeId: id, withSubtree }) } catch (e) { console.warn(e) }
+        }
+        const fresh = await getTree(this.treeId)
+        this.nodes = fresh.nodeList
+        await this.refreshTreeList()
+      } finally {
+        this.settled()
+      }
+      return topLevel.length
+    },
+
+    async toggleStar(nodeId) {
+      const n = this.nodeMap[nodeId]
+      if (!n) return
+      await this.patchNode(nodeId, { starred: !n.starred })
+      return !n.starred
     },
 
     /** 清空画布：删除整棵对话树 */
@@ -164,19 +341,28 @@ export const useTreeStore = defineStore('tree', {
       this.treeId = null
       this.treeTitle = ''
       this.nodes = []
+      this.past = []
+      this.future = []
       await this.refreshTreeList()
     },
 
     async renameTree(title) {
       const t = (title || '').trim()
       if (!t || !this.treeId) return
+      this.commit()
       this.treeTitle = t
-      await renameTreeApi(this.treeId, t)
-      await this.refreshTreeList()
+      this.touch()
+      try {
+        await renameTreeApi(this.treeId, t)
+        await this.refreshTreeList()
+      } finally {
+        this.settled()
+      }
     },
 
-    /** 金字塔布局：根节点顶部居中，逐层向下展开，父节点居中于其子节点上方 */
-    tidyLayout() {
+    /** 金字塔布局：根节点顶部居中，逐层向下展开，父节点居中于其子节点上方
+     *  pushHistory=false 用于「自动整理」这类伴随动作，避免多出一条撤销记录 */
+    tidyLayout(pushHistory = true) {
       const H_GAP = 90          // 同层相邻子树的水平间距
       const V_GAP = 150         // 层与层之间的垂直间距
       const ROOT_GAP = 120      // 多根之间的间距
@@ -271,8 +457,14 @@ export const useTreeStore = defineStore('tree', {
         const n = this.nodeMap[id]
         n.x -= minX
         n.y -= minY
-        updateNodeApi({ treeId: this.treeId, nodeId: n.nodeId, x: n.x, y: n.y }).catch(() => {})
       }
+      if (pushHistory) this.commit()
+      this.touch()
+      const jobs = [...vis].map(id => {
+        const n = this.nodeMap[id]
+        return updateNodeApi({ treeId: this.treeId, nodeId: n.nodeId, x: n.x, y: n.y }).catch(() => {})
+      })
+      Promise.all(jobs).then(() => this.settled())
     }
   }
 })

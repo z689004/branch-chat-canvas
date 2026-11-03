@@ -62,12 +62,27 @@ class NodeUpdateBody(BaseModel):
     y: Optional[float] = None
     # 卡片尺寸：{"w": 宽度, "h": 高度}，由前端拖拽调整后保存
     size: Optional[dict] = None
+    # 收藏标记（用于节点状态徽标）
+    starred: Optional[bool] = None
 
 
 class SendBody(BaseModel):
     treeId: str
     nodeId: str
     content: str
+
+
+class DuplicateBody(BaseModel):
+    treeId: str
+    nodeId: str
+    withSubtree: bool = False      # True = 连同整条分支一起复制
+
+
+class SnapshotBody(BaseModel):
+    """整树快照写入：供前端撤销 / 重做一次性还原结构与内容。"""
+    treeId: str
+    title: Optional[str] = None
+    nodeList: List[dict] = Field(default_factory=list)
 
 
 class DeleteBody(BaseModel):

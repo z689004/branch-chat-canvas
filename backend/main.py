@@ -41,6 +41,7 @@ import llm_client
 import storage
 from models import (
     TreeCreateBody, TreeUpdateBody, ChildCreateBody, NodeUpdateBody, SendBody,
+    DuplicateBody, SnapshotBody,
 )
 
 app = FastAPI(title="分支对话 AI 画布", version="0.1.0")
@@ -91,6 +92,7 @@ def _new_node(parent_id, title, selected_context="", context_mode="simple",
         "x": x,
         "y": y,
         "isCollapsed": False,
+        "starred": False,
         "createTime": t,
         "updateTime": t,
     }
@@ -228,10 +230,60 @@ def node_update(body: NodeUpdateBody):
             }
         except (TypeError, ValueError):
             pass
+    if body.starred is not None:
+        node["starred"] = bool(body.starred)
     node["updateTime"] = now()
     tree["updateTime"] = now()
     storage.save_tree(tree)
     return node
+
+
+def _children_index(tree: dict) -> dict:
+    idx = {}
+    for n in tree["nodeList"]:
+        pid = n.get("parentId")
+        if pid:
+            idx.setdefault(pid, []).append(n)
+    return idx
+
+
+@app.post("/api/node/duplicate")
+def node_duplicate(body: DuplicateBody):
+    """复制节点；withSubtree=True 时连同整条分支一起复制。"""
+    tree = get_tree_or_404(body.treeId)
+    node = get_node(tree, body.nodeId)
+    kids_idx = _children_index(tree)
+
+    same_level = [n for n in tree["nodeList"] if n.get("parentId") == node.get("parentId")]
+    card_w = (node.get("size") or {}).get("w", 340)
+    base_x = max((n.get("x", 0) for n in same_level), default=node.get("x", 0))
+    dx = base_x + card_w + 90 - node.get("x", 0)     # 副本排在同层最右侧
+    first = {"id": None}
+
+    def clone(n: dict, parent_id, is_root: bool) -> dict:
+        nid = uuid.uuid4().hex
+        c = dict(n)
+        c["nodeId"] = nid
+        c["parentId"] = parent_id
+        c["title"] = f"{n.get('title', '新分支')} 副本" if is_root else n.get("title", "新分支")
+        c["messages"] = [dict(m) for m in n.get("messages", [])]
+        c["x"] = n.get("x", 0) + dx
+        c["y"] = n.get("y", 0)
+        c["isCollapsed"] = False
+        c["createTime"] = now()
+        c["updateTime"] = now()
+        tree["nodeList"].append(c)
+        if is_root:
+            first["id"] = nid
+        if body.withSubtree:
+            for k in kids_idx.get(n["nodeId"], []):
+                clone(k, nid, False)
+        return c
+
+    clone(node, node.get("parentId"), True)
+    tree["updateTime"] = now()
+    storage.save_tree(tree)
+    return {"ok": True, "nodeId": first["id"], "nodeList": tree["nodeList"]}
 
 
 @app.delete("/api/node/delete")
@@ -324,6 +376,40 @@ def llm_profile_activate(pid: str):
 async def llm_config_test(body: dict = None):
     """真实连通性测试：可测已保存档案（传 id），也可测未保存的表单内容。"""
     return await llm_client.test_profile(body or {})
+
+
+# ---------------- 整树快照（撤销 / 重做） ----------------
+
+@app.post("/api/tree/snapshot")
+def tree_snapshot(body: SnapshotBody):
+    """用前端传来的完整节点列表覆盖当前画布（撤销/重做、批量操作后一次性落库）。"""
+    tree = get_tree_or_404(body.treeId)
+    cleaned = []
+    seen = set()
+    for raw in body.nodeList or []:
+        n = dict(raw)
+        nid = n.get("nodeId")
+        if not nid or nid in seen:
+            continue
+        seen.add(nid)
+        n.setdefault("parentId", None)
+        n.setdefault("title", "新对话")
+        n.setdefault("selectedContext", "")
+        n.setdefault("contextMode", "simple")
+        n.setdefault("messages", [])
+        n.setdefault("x", 0.0)
+        n.setdefault("y", 0.0)
+        n.setdefault("isCollapsed", False)
+        cleaned.append(n)
+    for n in cleaned:      # 父节点已不存在时提升为根节点，避免出现孤儿节点
+        if n["parentId"] and n["parentId"] not in seen:
+            n["parentId"] = None
+    tree["nodeList"] = cleaned
+    if body.title:
+        tree["title"] = body.title
+    tree["updateTime"] = now()
+    storage.save_tree(tree)
+    return tree
 
 
 # ---------------- 导出 ----------------

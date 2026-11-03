@@ -28,6 +28,12 @@ export const deleteTreeApi = (treeId) =>
   request(`/api/tree/delete?treeId=${encodeURIComponent(treeId)}`, { method: 'DELETE' })
 export const renameTreeApi = (treeId, title) =>
   request('/api/tree/update', { method: 'PUT', body: JSON.stringify({ treeId, title }) })
+/** 复制节点；withSubtree=true 时连同整条分支一起复制，返回新的完整节点列表 */
+export const duplicateNode = (payload) =>
+  request('/api/node/duplicate', { method: 'POST', body: JSON.stringify(payload) })
+/** 整树快照写入（撤销 / 重做） */
+export const saveTreeSnapshot = (payload) =>
+  request('/api/tree/snapshot', { method: 'POST', body: JSON.stringify(payload) })
 
 const EXT = { markdown: 'md', mermaid: 'mmd', json: 'json' }
 

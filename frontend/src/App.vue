@@ -13,7 +13,11 @@ import {
 import ChatNode from './components/ChatNode.vue'
 
 const store = useTreeStore()
-const { fitView } = useVueFlow()
+const { fitView, viewport, zoomIn, zoomOut, getSelectedNodes } = useVueFlow()
+
+/** 适应视图：缩放到刚好装下全部节点，但最多放大到 100%，避免小画布被拉得过大 */
+const fitAll = (padding = 0.25, duration = 300) =>
+  fitView({ padding, duration, maxZoom: 1 })
 
 const flowNodes = computed(() =>
   store.visibleNodes.map(n => ({
@@ -24,21 +28,36 @@ const flowNodes = computed(() =>
   }))
 )
 
+/** 连线按分支类型区分样式：精简（片段上下文）= 实线，完整（继承全对话）= 圆点虚线 */
 const flowEdges = computed(() =>
   store.visibleNodes
     .filter(n => n.parentId && store.nodeMap[n.parentId])
-    .map(n => ({
-      id: `e-${n.parentId}-${n.nodeId}`,
-      source: n.parentId,
-      target: n.nodeId,
-      // 金字塔布局：连线从父节点底部出发，接到子节点顶部
-      type: 'smoothstep',
-      sourcePosition: 'bottom',
-      targetPosition: 'top',
-      animated: false,
-      style: { stroke: '#a8b3c5', strokeWidth: 2 },
-      markerEnd: { type: 'arrowclosed', color: '#a8b3c5' }
-    }))
+    .map(n => {
+      const full = n.contextMode === 'full'
+      const color = full ? '#00b42a' : '#165dff'
+      return {
+        id: `e-${n.parentId}-${n.nodeId}`,
+        source: n.parentId,
+        target: n.nodeId,
+        // 金字塔布局：连线从父节点底部出发，接到子节点顶部
+        type: 'smoothstep',
+        sourcePosition: 'bottom',
+        targetPosition: 'top',
+        animated: false,
+        label: full ? '完整' : '精简',
+        labelShowBg: true,
+        labelBgPadding: [4, 2],
+        labelBgBorderRadius: 4,
+        labelStyle: { fill: color, fontSize: 10 },
+        labelBgStyle: { fill: theme === 'dark' ? '#1f2125' : '#fff', fillOpacity: 0.92 },
+        style: {
+          stroke: color,
+          strokeWidth: 2,
+          strokeDasharray: full ? '6 4' : undefined
+        },
+        markerEnd: { type: 'arrowclosed', color }
+      }
+    })
 )
 
 function onDragStop({ node }) {
@@ -63,7 +82,7 @@ function onMouseUp(e) {
     const sel = window.getSelection()
     const text = sel ? sel.toString().trim() : ''
     if (!text || text.length < 4) {
-      // 已取消选中：面板保留 1.5 秒后消失
+      // 已取消选中：面板保留 0.5 秒后消失
       if (branch.visible) scheduleBranchHide()
       return
     }
@@ -97,9 +116,9 @@ async function quickCreate(mode) {
     branch.visible = false
     window.getSelection()?.removeAllRanges()
     // 新建分支后按金字塔重新排布（可关闭后自由摆放）
-    if (autoTidy.value) store.tidyLayout()
+    if (autoTidy.value) store.tidyLayout(false)
     ElMessage.success(mode === 'simple' ? '已创建精简分支，去新节点继续追问吧' : '已创建完整分支，去新节点继续追问吧')
-    nextTick(() => fitView({ padding: 0.25, duration: 400 }))
+    nextTick(() => fitAll(0.25, 400))
   } catch (e) {
     ElMessage.error(e.message)
   }
@@ -107,44 +126,90 @@ async function quickCreate(mode) {
 
 // ---------- 画布操作 ----------
 async function newTree() {
-  try { await store.newTree(); ElMessage.success('新画布已创建'); nextTick(() => fitView({ padding: 0.3, duration: 300 })) }
+  try { await store.newTree(); ElMessage.success('新画布已创建'); nextTick(() => fitAll(0.3, 300)) }
   catch (e) { ElMessage.error(e.message) }
 }
 async function switchTree(treeId) {
-  try { await store.loadTree(treeId); nextTick(() => fitView({ padding: 0.25, duration: 300 })) }
+  try { await store.loadTree(treeId); nextTick(() => fitAll(0.25, 300)) }
   catch (e) { ElMessage.error(e.message) }
 }
+
+function downloadText(text, filename, mime) {
+  const url = URL.createObjectURL(new Blob([text], { type: `${mime};charset=utf-8` }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 3000)
+}
+
 async function doExport(format) {
   if (!store.treeId) return
   try {
     const { text, filename } = await exportTree(store.treeId, format)
     const mime = format === 'json' ? 'application/json'
       : format === 'mermaid' ? 'text/plain' : 'text/markdown'
-    const url = URL.createObjectURL(new Blob([text], { type: `${mime};charset=utf-8` }))
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    setTimeout(() => URL.revokeObjectURL(url), 3000)
+    downloadText(text, filename, mime)
     ElMessage.success('已导出')
   } catch (e) {
     ElMessage.error(e.message)
   }
 }
 
+/** 导出单条分支（子树） */
+function branchMarkdown(nodeId) {
+  const lines = []
+  const walk = (id, depth) => {
+    const n = store.nodeMap[id]
+    if (!n) return
+    lines.push(`${'#'.repeat(Math.min(depth + 1, 6))} ${n.parentId ? '🌿 ' : '🌱 '}${n.title}`)
+    const meta = [`上下文：${n.contextMode === 'full' ? '完整模式' : '精简模式'}`]
+    if (n.selectedContext) meta.push(`选中片段：「${n.selectedContext.slice(0, 80)}」`)
+    lines.push(`> ${meta.join(' ｜ ')}`)
+    for (const m of n.messages || []) {
+      lines.push(`${m.role === 'user' ? '**🙋 用户**' : '**🤖 AI**'}：${m.content}\n`)
+    }
+    lines.push('')
+    ;(store.childrenMap[id] || []).forEach(k => walk(k.nodeId, depth + 1))
+  }
+  walk(nodeId, 0)
+  return lines.join('\n')
+}
+function exportBranch(nodeId) {
+  const n = store.nodeMap[nodeId]
+  if (!n) return
+  const safe = (n.title || '分支').replace(/[\\/:*?"<>|]/g, '_')
+  downloadText(branchMarkdown(nodeId), `${safe}.md`, 'text/markdown')
+  ElMessage.success('已导出该分支')
+}
+
+let lastClearAt = 0
 async function clearCanvas() {
   if (!store.treeId) return
+  if (Date.now() - lastClearAt < 3000) {
+    ElMessage.warning('清空操作过于频繁，请稍候再试')
+    return
+  }
+  const count = store.nodes.length
   try {
-    await ElMessageBox.confirm(
-      '将删除当前画布的全部节点与对话记录，且不可恢复。确认清空？',
+    await ElMessageBox.prompt(
+      `将删除画布「${store.treeTitle || '未命名画布'}」上全部 ${count} 个节点及其对话记录，且不可恢复。确认请输入：清空`,
       '清空画布',
-      { type: 'warning', confirmButtonText: '清空', cancelButtonText: '取消' }
+      {
+        type: 'warning',
+        confirmButtonText: '确认清空',
+        cancelButtonText: '取消',
+        inputPlaceholder: '在此输入：清空',
+        inputPattern: /^清空$/,
+        inputErrorMessage: '请输入「清空」两个字以确认删除'
+      }
     )
   } catch (e) { return }
   try {
     await store.clearCanvas()
+    lastClearAt = Date.now()
     ElMessage.success('画布已清空')
   } catch (e) {
     ElMessage.error(e.message)
@@ -159,6 +224,117 @@ async function startFromWelcome() {
   await newTree()
   const root = store.roots[0]
   if (root) await store.send(root.nodeId, q)
+}
+
+// ---------- 撤销 / 重做 ----------
+async function doUndo() {
+  if (!store.canUndo) { ElMessage.info('没有可撤销的操作'); return }
+  await store.undo()
+  ElMessage.success('已撤销')
+}
+async function doRedo() {
+  if (!store.canRedo) { ElMessage.info('没有可重做的操作'); return }
+  await store.redo()
+  ElMessage.success('已重做')
+}
+
+// ---------- 节点：右键菜单 / 新建子分支 ----------
+const ctx = reactive({ visible: false, x: 0, y: 0, nodeId: '' })
+const ctxNode = computed(() => (ctx.nodeId ? store.nodeMap[ctx.nodeId] : null))
+
+function openNodeMenu({ nodeId, x, y }) {
+  ctx.nodeId = nodeId
+  ctx.x = Math.min(x, window.innerWidth - 210)
+  ctx.y = Math.min(y, window.innerHeight - 300)
+  ctx.visible = true
+}
+function closeNodeMenu() { ctx.visible = false }
+
+async function addChildTo(nodeId) {
+  closeNodeMenu()
+  try {
+    await store.createChild(nodeId, '', 'full', '新分支')
+    if (autoTidy.value) store.tidyLayout(false)
+    ElMessage.success('已新建子分支')
+    nextTick(() => fitAll(0.25, 300))
+  } catch (e) { ElMessage.error(e.message) }
+}
+
+async function ctxDuplicate(withSubtree) {
+  const id = ctx.nodeId
+  closeNodeMenu()
+  try {
+    await store.duplicate(id, withSubtree)
+    if (autoTidy.value) store.tidyLayout(false)
+    ElMessage.success(withSubtree ? '已复制整条分支' : '已复制该节点')
+    nextTick(() => fitAll(0.25, 300))
+  } catch (e) { ElMessage.error(e.message) }
+}
+async function ctxToggleCollapse() {
+  const n = ctxNode.value
+  if (!n) return
+  closeNodeMenu()
+  await store.patchNode(n.nodeId, { isCollapsed: !n.isCollapsed })
+  if (autoTidy.value) store.tidyLayout(false)
+}
+async function ctxDelete() {
+  const n = ctxNode.value
+  if (!n) return
+  const total = store.subtreeIds(n.nodeId).length
+  closeNodeMenu()
+  try {
+    await ElMessageBox.confirm(
+      `将删除「${n.title}」${total > 1 ? `及其 ${total - 1} 个子孙节点` : ''}，且不可恢复。确认删除？`,
+      '删除节点',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+    )
+  } catch (e) { return }
+  try {
+    const c = await store.removeNode(n.nodeId)
+    ElMessage.success(`已删除 ${c} 个节点`)
+  } catch (e) { ElMessage.error(e.message) }
+}
+function ctxStar() {
+  const n = ctxNode.value
+  if (!n) return
+  store.toggleStar(n.nodeId)
+  closeNodeMenu()
+}
+
+// ---------- 批量操作（Ctrl / Shift 多选） ----------
+const selectedIds = computed(() => (getSelectedNodes?.value || []).map(n => n.id))
+const showBatchBar = computed(() => selectedIds.value.length > 1)
+
+async function batchDuplicate() {
+  const ids = [...selectedIds.value]
+  try {
+    await store.duplicateMany(ids, true)
+    if (autoTidy.value) store.tidyLayout(false)
+    ElMessage.success(`已复制 ${ids.length} 个分支`)
+  } catch (e) { ElMessage.error(e.message) }
+}
+async function batchDelete() {
+  const ids = [...selectedIds.value]
+  const total = new Set(ids.flatMap(id => store.subtreeIds(id))).size
+  try {
+    await ElMessageBox.confirm(
+      `将删除选中的 ${ids.length} 个节点（含子孙共 ${total} 个），且不可恢复。确认删除？`,
+      '批量删除', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+    )
+  } catch (e) { return }
+  try {
+    const c = await store.removeNodes(ids)
+    ElMessage.success(`已删除 ${c} 个分支`)
+  } catch (e) { ElMessage.error(e.message) }
+}
+function batchExport() {
+  const ids = [...selectedIds.value]
+  const text = ids.map(id => branchMarkdown(id)).join('\n\n---\n\n')
+  downloadText(text, `对话分支-${ids.length}条.md`, 'text/markdown')
+  ElMessage.success('已导出所选分支')
+}
+function clearSelection() {
+  ;(getSelectedNodes?.value || []).forEach(n => { n.selected = false })
 }
 
 // ---------- 模型与密钥管理 ----------
@@ -295,15 +471,48 @@ function testClass(r) {
   return r.warning ? 'warn' : 'ok'
 }
 
-// ---------- 画布辅助 ----------
+// ---------- 画布辅助：小地图 / 网格 / 主题 / 缩放 ----------
 const showMinimap = ref(true)
-const editingTreeName = ref(false)
-const treeNameDraft = ref('')
+const GRID_KEY = 'bcc:showGrid'
+const showGrid = ref(localStorage.getItem(GRID_KEY) !== '0')
+const theme = ref(localStorage.getItem('bcc:theme') || 'light')
 
+function toggleGrid() {
+  showGrid.value = !showGrid.value
+  localStorage.setItem(GRID_KEY, showGrid.value ? '1' : '0')
+}
+function toggleTheme() {
+  theme.value = theme.value === 'dark' ? 'light' : 'dark'
+  localStorage.setItem('bcc:theme', theme.value)
+  document.documentElement.setAttribute('data-theme', theme.value)
+  document.documentElement.classList.toggle('dark', theme.value === 'dark')
+}
 function toggleMinimap() {
   showMinimap.value = !showMinimap.value
-  nextTick(() => fitView({ padding: 0.25, duration: 300 }))
+  nextTick(() => fitAll(0.25, 300))
 }
+
+/** 小地图按节点类型着色：根绿 / 分支蓝 / 报错红 / 空白灰 */
+function miniColor(node) {
+  const n = store.nodeMap[node.id]
+  if (!n) return '#c9cdd4'
+  if (!(n.messages || []).length) return '#c9cdd4'
+  const last = [...n.messages].reverse().find(m => m.role === 'assistant')
+  if (last && String(last.content).startsWith('⚠️')) return '#f53f3f'
+  return n.parentId ? '#165dff' : '#00b42a'
+}
+
+const zoomPct = computed(() => Math.round((viewport?.value?.zoom || 1) * 100))
+function onWheel(e) {
+  if (!e.ctrlKey && !e.metaKey) return       // Ctrl / ⌘ + 滚轮 = 缩放，普通滚轮 = 平移画布
+  e.preventDefault()
+  if (e.deltaY < 0) zoomIn({ duration: 120 })
+  else zoomOut({ duration: 120 })
+}
+
+const spaceDown = ref(false)
+const editingTreeName = ref(false)
+const treeNameDraft = ref('')
 function startRenameTree() {
   treeNameDraft.value = store.treeTitle
   editingTreeName.value = true
@@ -318,28 +527,62 @@ async function saveRenameTree() {
 function tidyLayout() {
   store.tidyLayout()
   ElMessage.success('已按金字塔结构整理布局')
-  nextTick(() => fitView({ padding: 0.2, duration: 400 }))
+  nextTick(() => fitAll(0.2, 400))
 }
 function onAutoTidyChange(v) {
   localStorage.setItem(AUTO_TIDY_KEY, v ? '1' : '0')
   if (v) tidyLayout()
 }
+
+const isTyping = (e) => {
+  const t = e.target
+  return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
+}
 function onKeydown(e) {
   if (e.key === 'Escape') {
     window.getSelection()?.removeAllRanges()
     branch.visible = false
+    closeNodeMenu()
+    return
   }
+  const mod = e.ctrlKey || e.metaKey
+  if (mod && e.key.toLowerCase() === 'z') {
+    e.preventDefault()
+    e.shiftKey ? doRedo() : doUndo()
+    return
+  }
+  if (mod && e.key.toLowerCase() === 'y') {
+    e.preventDefault()
+    doRedo()
+    return
+  }
+  if (isTyping(e)) return
+  if (e.code === 'Space') { spaceDown.value = true; e.preventDefault(); return }
+  if (e.key === 'f' || e.key === 'F') {
+    e.preventDefault()
+    fitAll(0.25, 300)
+  }
+}
+function onKeyup(e) {
+  if (e.code === 'Space') spaceDown.value = false
 }
 
 onMounted(() => {
   document.addEventListener('mouseup', onMouseUp)
   document.addEventListener('keydown', onKeydown)
+  document.addEventListener('keyup', onKeyup)
+  document.addEventListener('mousedown', onDocMouseDown)
   refreshLlm()
-  store.init().then(() => nextTick(() => fitView({ padding: 0.3, duration: 300 })))
+  store.init().then(() => nextTick(() => fitAll(0.3, 300)))
 })
+function onDocMouseDown(e) {
+  if (!e.target.closest?.('.ctx-menu')) closeNodeMenu()
+}
 onBeforeUnmount(() => {
   document.removeEventListener('mouseup', onMouseUp)
   document.removeEventListener('keydown', onKeydown)
+  document.removeEventListener('keyup', onKeyup)
+  document.removeEventListener('mousedown', onDocMouseDown)
   cancelBranchHide()
 })
 </script>
@@ -348,61 +591,113 @@ onBeforeUnmount(() => {
   <div class="app">
     <header class="toolbar">
       <div class="logo">🌿 分支对话画布</div>
-      <el-select
-        :model-value="store.treeId"
-        size="small"
-        style="width: 170px"
-        placeholder="选择画布"
-        @change="switchTree"
-      >
-        <el-option v-for="t in store.treeList" :key="t.treeId" :label="`${t.title} (${t.nodeCount})`" :value="t.treeId" />
-      </el-select>
-      <!-- 画布名称：可点击编辑 -->
-      <template v-if="store.treeId">
-        <template v-if="editingTreeName">
-          <input
-            v-model="treeNameDraft"
-            class="tree-name-input"
-            @keydown.enter="saveRenameTree"
-            @blur="saveRenameTree"
-            v-focus
-          />
+
+      <!-- 分组一：画布管理 -->
+      <div class="tb-group">
+        <el-select
+          :model-value="store.treeId"
+          size="small"
+          style="width: 150px"
+          placeholder="选择画布"
+          @change="switchTree"
+        >
+          <el-option v-for="t in store.treeList" :key="t.treeId" :label="`${t.title} (${t.nodeCount})`" :value="t.treeId" />
+        </el-select>
+        <template v-if="store.treeId">
+          <template v-if="editingTreeName">
+            <input
+              v-model="treeNameDraft"
+              class="tree-name-input"
+              @keydown.enter="saveRenameTree"
+              @blur="saveRenameTree"
+              v-focus
+            />
+          </template>
+          <el-tooltip content="点击重命名画布" placement="bottom">
+            <span class="tree-name" @click="startRenameTree">{{ store.treeTitle || '未命名画布' }} ✏️</span>
+          </el-tooltip>
+          <el-tooltip
+            :content="store.saveStatus === 'saved'
+              ? `改动已自动保存到本机${store.lastSavedAt ? '（' + store.lastSavedAt + '）' : ''}`
+              : '有改动正在保存…'" placement="bottom"
+          >
+            <span class="save-state" :class="store.saveStatus">
+              {{ store.saveStatus === 'saved' ? '已保存 ✓' : '未保存 ●' }}
+            </span>
+          </el-tooltip>
         </template>
-        <el-tooltip content="点击重命名画布" placement="bottom">
-          <span class="tree-name" @click="startRenameTree">{{ store.treeTitle || '未命名画布' }} ✏️</span>
+        <el-button size="small" @click="newTree">＋ 新建画布</el-button>
+      </div>
+
+      <div class="tb-divider"></div>
+
+      <!-- 分组二：布局与视图 -->
+      <div class="tb-group">
+        <el-tooltip content="新建分支后自动按金字塔排布；取消勾选可手动自由摆放" placement="bottom">
+          <el-checkbox v-model="autoTidy" size="small" @change="onAutoTidyChange">自动整理</el-checkbox>
         </el-tooltip>
-      </template>
-      <el-button size="small" @click="newTree">＋ 新建画布</el-button>
-      <div class="tb-divider"></div>
-      <el-tooltip content="选中 AI 回答文本 → 弹出按钮，新建子对话分支" placement="bottom">
-        <span class="hint-tag">💡 划词创建分支</span>
-      </el-tooltip>
+        <el-tooltip content="一键重排：根在顶部居中，逐层向下展开" placement="bottom">
+          <el-button size="small" @click="tidyLayout">✨ 整理布局</el-button>
+        </el-tooltip>
+        <el-tooltip content="缩放到刚好装下全部节点（快捷键 F）" placement="bottom">
+          <el-button size="small" @click="fitAll(0.25, 300)">适应视图</el-button>
+        </el-tooltip>
+        <el-tooltip content="显示 / 隐藏右下角小地图（可按类型着色、拖拽跳转）" placement="bottom">
+          <el-button size="small" :type="showMinimap ? 'primary' : ''" plain @click="toggleMinimap">🗺️</el-button>
+        </el-tooltip>
+        <el-tooltip content="显示 / 隐藏画布网格" placement="bottom">
+          <el-button size="small" :type="showGrid ? 'primary' : ''" plain @click="toggleGrid">▦</el-button>
+        </el-tooltip>
+        <el-tooltip :content="theme === 'dark' ? '切换到浅色主题' : '切换到深色主题'" placement="bottom">
+          <el-button size="small" plain @click="toggleTheme">{{ theme === 'dark' ? '☀️' : '🌙' }}</el-button>
+        </el-tooltip>
+      </div>
+
       <div class="spacer"></div>
-      <el-tooltip content="新建分支后自动按金字塔排布；取消勾选可手动自由摆放" placement="bottom">
-        <el-checkbox v-model="autoTidy" size="small" style="margin-right: 4px;" @change="onAutoTidyChange">自动整理</el-checkbox>
-      </el-tooltip>
-      <el-tooltip content="把节点整理成金字塔对话树：根在顶部居中，逐层向下展开" placement="bottom">
-        <el-button size="small" @click="tidyLayout">✨ 整理布局</el-button>
-      </el-tooltip>
-      <el-button size="small" @click="fitView({ padding: 0.25, duration: 300 })">适应视图</el-button>
-      <el-tooltip content="显示 / 隐藏右下角小地图" placement="bottom">
-        <el-button size="small" :type="showMinimap ? 'primary' : ''" plain @click="toggleMinimap">🗺️ 小地图</el-button>
-      </el-tooltip>
+
+      <!-- 分组三：操作（靠右） -->
+      <div class="tb-group">
+        <el-tooltip content="撤销上一步操作（Ctrl + Z）" placement="bottom">
+          <el-button size="small" :disabled="!store.canUndo" @click="doUndo">↶</el-button>
+        </el-tooltip>
+        <el-tooltip content="重做被撤销的操作（Ctrl + Shift + Z）" placement="bottom">
+          <el-button size="small" :disabled="!store.canRedo" @click="doRedo">↷</el-button>
+        </el-tooltip>
+        <el-dropdown @command="doExport">
+          <el-button size="small">导出 ▾</el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="markdown">📝 对话树 Markdown</el-dropdown-item>
+              <el-dropdown-item command="mermaid">🧩 Mermaid 导图代码</el-dropdown-item>
+              <el-dropdown-item command="json">💾 JSON（备份）</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+        <el-tooltip content="删除当前画布的全部节点与对话（需二次确认）" placement="bottom">
+          <el-button size="small" type="danger" plain @click="clearCanvas">🗑️ 清空</el-button>
+        </el-tooltip>
+      </div>
+
       <div class="tb-divider"></div>
-      <el-tooltip content="删除当前画布的全部节点与对话" placement="bottom">
-        <el-button size="small" type="danger" plain @click="clearCanvas">🗑️ 清空</el-button>
-      </el-tooltip>
-      <el-dropdown @command="doExport">
-        <el-button size="small">导出 ▾</el-button>
-        <template #dropdown>
-          <el-dropdown-menu>
-            <el-dropdown-item command="markdown">📝 对话树 Markdown</el-dropdown-item>
-            <el-dropdown-item command="mermaid">🧩 Mermaid 导图代码</el-dropdown-item>
-            <el-dropdown-item command="json">💾 JSON（备份）</el-dropdown-item>
-          </el-dropdown-menu>
+
+      <el-popover placement="bottom-end" width="300" trigger="click">
+        <template #reference>
+          <el-button size="small" plain>⌨️</el-button>
         </template>
-      </el-dropdown>
-      <div class="tb-divider"></div>
+        <div class="kbd-list">
+          <div class="kbd-row"><span>适应视图</span><b>F</b></div>
+          <div class="kbd-row"><span>撤销 / 重做</span><b>Ctrl + Z / Ctrl + Shift + Z</b></div>
+          <div class="kbd-row"><span>缩放画布</span><b>Ctrl + 滚轮</b></div>
+          <div class="kbd-row"><span>平移画布</span><b>空格 + 拖拽 / 滚轮</b></div>
+          <div class="kbd-row"><span>框选节点</span><b>Shift + 拖拽</b></div>
+          <div class="kbd-row"><span>多选节点</span><b>Ctrl + 点击</b></div>
+          <div class="kbd-row"><span>节点菜单</span><b>右键卡片</b></div>
+          <div class="kbd-row"><span>划词生分支</span><b>选中回答文字</b></div>
+          <div class="kbd-row"><span>重命名节点</span><b>双击标题</b></div>
+          <div class="kbd-row"><span>取消划选面板</span><b>Esc</b></div>
+        </div>
+      </el-popover>
+
       <el-tooltip content="管理多个密钥档案：添加 / 测试 / 切换当前使用的模型" placement="bottom">
         <el-button size="small" :type="llmInfo.provider === 'mock' ? 'warning' : 'success'" plain @click="openLlmDialog">
           {{ llmInfo.provider === 'mock' ? '🧪 演示模式' : (llmInfo.activeName || providerLabel[llmInfo.provider] || llmInfo.provider) }}
@@ -410,7 +705,7 @@ onBeforeUnmount(() => {
       </el-tooltip>
     </header>
 
-    <div class="canvas-wrap">
+    <div class="canvas-wrap" :class="{ 'space-pan': spaceDown }" @wheel="onWheel">
       <VueFlow
         v-if="store.treeId"
         :nodes="flowNodes"
@@ -418,13 +713,34 @@ onBeforeUnmount(() => {
         :min-zoom="0.2"
         :max-zoom="2"
         :delete-key-code="null"
+        :multi-selection-key-code="'Control'"
+        :zoom-on-scroll="false"
+        :pan-on-scroll="true"
+        :pan-on-scroll-mode="'free'"
+        :nodes-draggable="!spaceDown"
         @node-drag-stop="onDragStop"
       >
-        <Background :gap="20" />
-        <Controls />
-        <MiniMap v-if="showMinimap" pannable zoomable />
+        <Background
+          v-if="showGrid"
+          :gap="32"
+          :size="1"
+          :pattern-color="theme === 'dark' ? '#4a4d55' : '#c9cdd4'"
+        />
+        <Controls :show-interactive="false" />
+        <MiniMap
+          v-if="showMinimap"
+          pannable
+          zoomable
+          :node-color="miniColor"
+          :node-stroke-width="2"
+          :mask-color="theme === 'dark' ? 'rgba(23,23,26,0.72)' : 'rgb(240,240,240,0.7)'"
+        />
         <template #node-chat="nodeProps">
-          <ChatNode :node-id="nodeProps.id" />
+          <ChatNode
+            :node-id="nodeProps.id"
+            @menu="openNodeMenu"
+            @child-created="() => { if (autoTidy) store.tidyLayout(false); nextTick(() => fitAll(0.25, 300)) }"
+          />
         </template>
       </VueFlow>
 
@@ -444,8 +760,31 @@ onBeforeUnmount(() => {
           <div class="welcome-alt">
             <el-button text size="small" @click="newTree">或先创建一个空白画布</el-button>
           </div>
+          <div class="welcome-tip">改动会自动保存 · 右键节点可快速新建分支 / 复制 / 折叠 / 导出</div>
         </div>
       </div>
+
+      <!-- 缩放百分比 -->
+      <div v-if="store.treeId" class="zoom-badge">
+        <el-tooltip content="缩小（Ctrl + 滚轮向下）" placement="top">
+          <span class="zoom-btn" @click="zoomOut({ duration: 150 })">－</span>
+        </el-tooltip>
+        <span class="zoom-val" @click="fitAll(0.25, 300)" title="点击适应视图">{{ zoomPct }}%</span>
+        <el-tooltip content="放大（Ctrl + 滚轮向上）" placement="top">
+          <span class="zoom-btn" @click="zoomIn({ duration: 150 })">＋</span>
+        </el-tooltip>
+      </div>
+
+      <!-- 批量操作条：Ctrl / Shift 多选后出现 -->
+      <transition name="fade">
+        <div v-if="showBatchBar" class="batch-bar">
+          <span class="batch-count">已选中 {{ selectedIds.length }} 个节点</span>
+          <el-button size="small" @click="batchDuplicate">📋 批量复制</el-button>
+          <el-button size="small" @click="batchExport">📝 导出所选</el-button>
+          <el-button size="small" type="danger" plain @click="batchDelete">🗑️ 批量删除</el-button>
+          <el-button size="small" text @click="clearSelection">取消选择</el-button>
+        </div>
+      </transition>
     </div>
 
     <!-- 划选后弹出的分支面板：直接选模式一键创建 -->
@@ -459,6 +798,24 @@ onBeforeUnmount(() => {
         <button class="pop-btn simple" title="仅用选中片段作为上下文" @click="quickCreate('simple')">⚡ 精简</button>
         <button class="pop-btn full" title="继承父节点全部对话历史" @click="quickCreate('full')">📚 完整</button>
       </div>
+    </div>
+
+    <!-- 节点右键菜单 -->
+    <div
+      v-if="ctx.visible && ctxNode"
+      class="ctx-menu"
+      :style="{ left: ctx.x + 'px', top: ctx.y + 'px' }"
+    >
+      <div class="ctx-menu-title">🌿 {{ ctxNode.title }}</div>
+      <div class="ctx-item" @click="addChildTo(ctx.nodeId)">➕ 新增子分支</div>
+      <div class="ctx-item" @click="ctxDuplicate(false)">📋 复制本节点</div>
+      <div class="ctx-item" @click="ctxDuplicate(true)">🌳 复制整条分支</div>
+      <div class="ctx-item" @click="ctxToggleCollapse">
+        {{ ctxNode.isCollapsed ? '📂 展开该分支' : '📦 折叠该分支' }}
+      </div>
+      <div class="ctx-item" @click="ctxStar">{{ ctxNode.starred ? '★ 取消收藏' : '☆ 收藏节点' }}</div>
+      <div class="ctx-item" @click="exportBranch(ctx.nodeId)">📝 导出此分支</div>
+      <div class="ctx-item danger" @click="ctxDelete">🗑️ 删除节点（含子树）</div>
     </div>
 
     <!-- 模型与密钥管理：可添加多个 Key，随时切换启用 -->

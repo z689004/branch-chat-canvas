@@ -170,6 +170,7 @@ function newNode(parentId, title, selectedContext = '', contextMode = 'simple', 
     x,
     y,
     isCollapsed: false,
+    starred: false,
     createTime: t,
     updateTime: t
   }
@@ -254,9 +255,76 @@ export async function updateNodeApi(payload) {
   if (payload.contextMode === 'simple' || payload.contextMode === 'full') node.contextMode = payload.contextMode
   if (payload.x != null) node.x = payload.x
   if (payload.y != null) node.y = payload.y
+  if (payload.size != null) node.size = { w: payload.size.w, h: payload.size.h }
+  if (payload.starred != null) node.starred = !!payload.starred
   node.updateTime = now()
   writeTree(tree)
   return node
+}
+
+/** 复制节点；withSubtree=true 时连同整条分支一起复制 */
+export async function duplicateNode(payload) {
+  const tree = readTree(payload.treeId)
+  const node = tree.nodeList.find((n) => n.nodeId === payload.nodeId)
+  if (!node) throw new Error('节点不存在')
+  const kidsIdx = {}
+  for (const n of tree.nodeList) {
+    if (n.parentId) (kidsIdx[n.parentId] ||= []).push(n)
+  }
+  const sameLevel = tree.nodeList.filter((n) => n.parentId === node.parentId)
+  const cardW = (node.size || {}).w || 340
+  const baseX = Math.max(...sameLevel.map((n) => n.x ?? 0), node.x ?? 0)
+  const dx = baseX + cardW + 90 - (node.x ?? 0)
+  let rootId = null
+  const clone = (n, parentId, isRoot) => {
+    const c = {
+      ...n,
+      nodeId: uid(),
+      parentId,
+      title: isRoot ? `${n.title || '新分支'} 副本` : n.title,
+      messages: (n.messages || []).map((m) => ({ ...m })),
+      x: (n.x ?? 0) + dx,
+      y: n.y ?? 0,
+      isCollapsed: false,
+      createTime: now(),
+      updateTime: now()
+    }
+    tree.nodeList.push(c)
+    if (isRoot) rootId = c.nodeId
+    if (payload.withSubtree) for (const k of kidsIdx[n.nodeId] || []) clone(k, c.nodeId, false)
+    return c
+  }
+  clone(node, node.parentId, true)
+  writeTree(tree)
+  return { ok: true, nodeId: rootId, nodeList: JSON.parse(JSON.stringify(tree.nodeList)) }
+}
+
+/** 整树快照写入（撤销 / 重做） */
+export async function saveTreeSnapshot(payload) {
+  const tree = readTree(payload.treeId)
+  if (Array.isArray(payload.nodeList)) {
+    const seen = new Set()
+    const cleaned = []
+    for (const raw of payload.nodeList) {
+      const n = { ...raw }
+      if (!n.nodeId || seen.has(n.nodeId)) continue
+      seen.add(n.nodeId)
+      n.parentId = n.parentId || null
+      n.title = n.title || '新对话'
+      n.selectedContext = n.selectedContext || ''
+      n.contextMode = n.contextMode === 'full' ? 'full' : 'simple'
+      n.messages = Array.isArray(n.messages) ? n.messages : []
+      n.x = n.x ?? 0
+      n.y = n.y ?? 0
+      n.isCollapsed = !!n.isCollapsed
+      cleaned.push(n)
+    }
+    for (const n of cleaned) if (n.parentId && !seen.has(n.parentId)) n.parentId = null
+    tree.nodeList = cleaned
+  }
+  if (payload.title) tree.title = payload.title
+  writeTree(tree)
+  return JSON.parse(JSON.stringify(tree))
 }
 
 export async function deleteNodeApi(treeId, nodeId) {

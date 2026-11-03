@@ -1,31 +1,36 @@
 <script setup>
 import { ref, computed, watch, nextTick } from 'vue'
 import { useVueFlow, Handle, Position } from '@vue-flow/core'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import MarkdownIt from 'markdown-it'
 import { useTreeStore } from '../store/tree'
 
 const props = defineProps({ nodeId: { type: String, required: true } })
+const emit = defineEmits(['menu', 'child-created'])
 const store = useTreeStore()
 const { viewport } = useVueFlow()
 
 const node = computed(() => store.nodeMap[props.nodeId])
 const sending = computed(() => store.streamingNodeIds.includes(props.nodeId))
 const childCount = computed(() => (store.childrenMap[props.nodeId] || []).length)
-const descendantCount = computed(() => {
-  const doomed = new Set([props.nodeId])
-  let changed = true
-  while (changed) {
-    changed = false
-    for (const n of store.nodes) {
-      if (doomed.has(n.parentId) && !doomed.has(n.nodeId)) { doomed.add(n.nodeId); changed = true }
-    }
-  }
-  return doomed.size - 1
+const descendantCount = computed(() => store.subtreeIds(props.nodeId).length - 1)
+const isRoot = computed(() => !node.value?.parentId)
+
+/** 节点状态：生成中 / 报错 / 已完成 / 待编辑 */
+const status = computed(() => {
+  const n = node.value
+  if (!n) return { key: 'empty', text: '待编辑' }
+  if (sending.value) return { key: 'busy', text: '生成中' }
+  const last = [...(n.messages || [])].reverse().find(m => m.role === 'assistant')
+  if (last && String(last.content).startsWith('⚠️')) return { key: 'error', text: '报错' }
+  if (!(n.messages || []).length) return { key: 'empty', text: '待编辑' }
+  return { key: 'done', text: '已完成' }
 })
+const isEmpty = computed(() => !(node.value?.messages || []).length)
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
 const renderMd = (s) => md.render(s || '')
+const plainText = (s) => (s || '').replace(/[#>*`\-]/g, ' ').replace(/\s+/g, ' ').trim()
 
 const draft = ref('')
 const editing = ref(false)
@@ -62,17 +67,39 @@ function retry() {
   msgs.splice(msgs.length - 2, 2)
   store.send(props.nodeId, lastUser.content)
 }
-async function removeSelf() {
-  const n = descendantCount.value
+function toggleStar() {
+  store.toggleStar(props.nodeId)
+}
+
+/** 右键菜单：交给外层统一渲染（新增子分支 / 复制 / 折叠 / 导出 / 删除） */
+function onContextMenu(e) {
+  emit('menu', { nodeId: props.nodeId, x: e.clientX, y: e.clientY })
+}
+
+/** ＋ 快速新建子分支：继承父节点完整对话，2 次点击内完成 */
+async function addChild() {
+  if (!node.value) return
   try {
-    await ElMessageBox.confirm(
-      `将删除该节点${n > 0 ? `及其 ${n} 个子孙节点` : ''}，且不可恢复。确认删除？`,
-      '删除节点',
-      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
-    )
-    const count = await store.removeNode(props.nodeId)
-    ElMessage.success(`已删除 ${count} 个节点`)
-  } catch (e) { /* 取消 */ }
+    const child = await store.createChild(props.nodeId, '', 'full', '新分支')
+    ElMessage.success('已新建子分支，去新节点继续追问')
+    emit('child-created', child?.nodeId)
+  } catch (e) {
+    ElMessage.error(e.message)
+  }
+}
+
+// ---------- 悬浮 300ms 显示全文预览 ----------
+const preview = ref(false)
+let previewTimer = null
+function enterPreview() {
+  clearTimeout(previewTimer)
+  previewTimer = setTimeout(() => {
+    if ((node.value?.messages || []).length) preview.value = true
+  }, 300)
+}
+function leavePreview() {
+  clearTimeout(previewTimer)
+  preview.value = false
 }
 
 // ---------- 卡片尺寸：可拖拽调整并持久化 ----------
@@ -159,12 +186,6 @@ function startResize(e, dir) {
 function resetSize() {
   store.patchNode(props.nodeId, { size: { w: DEFAULT_W, h: DEFAULT_H } })
 }
-function onMenu(cmd) {
-  if (cmd === 'rename') startRename()
-  else if (cmd === 'collapse') toggleCollapse()
-  else if (cmd === 'size') resetSize()
-  else if (cmd === 'delete') removeSelf()
-}
 
 // 流式输出时滚动到底部
 watch(
@@ -181,11 +202,24 @@ watch(
   <div
     v-if="node"
     class="chat-node"
-    :class="{ collapsed: node.isCollapsed, resizing }"
+    :class="{
+      collapsed: node.isCollapsed,
+      resizing,
+      'is-empty': isEmpty && !node.isCollapsed,
+      'is-error': status.key === 'error',
+      'is-root': isRoot
+    }"
     :style="{ width: cardSize.w + 'px', height: node.isCollapsed ? 'auto' : cardSize.h + 'px' }"
+    @contextmenu.prevent="onContextMenu"
   >
-    <header class="node-header" :class="node.parentId ? 'is-branch' : 'is-root'">
+    <header
+      class="node-header"
+      :class="node.parentId ? 'is-branch' : 'is-root'"
+      @mouseenter="enterPreview"
+      @mouseleave="leavePreview"
+    >
       <span class="node-icon">{{ node.parentId ? '🌿' : '🌱' }}</span>
+      <span v-if="isRoot" class="node-badge badge-root">起始</span>
       <template v-if="editing">
         <input
           v-model="titleDraft"
@@ -197,29 +231,34 @@ watch(
       </template>
       <span v-else class="node-title" title="双击或点 ✏️ 重命名" @dblclick="startRename">{{ node.title }}</span>
       <span v-if="!editing" class="title-edit-btn" title="重命名" @click="startRename">✏️</span>
-      <el-tooltip v-if="node.parentId" content="精简：仅使用选中片段作为上下文" placement="top">
-        <span class="mode-chip" :class="{ active: node.contextMode === 'simple' }" @click="setMode('simple')">精简</span>
-      </el-tooltip>
-      <el-tooltip v-if="node.parentId" content="完整：继承父节点全部对话 + 选中片段" placement="top">
-        <span class="mode-chip" :class="{ active: node.contextMode === 'full' }" @click="setMode('full')">完整</span>
-      </el-tooltip>
+      <span v-if="node.isCollapsed && descendantCount" class="collapsed-count" :title="`已折叠 ${descendantCount} 个子孙节点`">
+        ➕ {{ descendantCount }}
+      </span>
       <el-tooltip :content="node.isCollapsed ? '展开子树' : '折叠子树'" placement="top">
         <span class="hdr-btn" @click="toggleCollapse">{{ node.isCollapsed ? '➕' : '➖' }}</span>
       </el-tooltip>
-      <el-dropdown trigger="click" @command="onMenu">
-        <span class="node-menu-btn">⋮</span>
-        <template #dropdown>
-          <el-dropdown-menu>
-            <el-dropdown-item command="rename">✏️ 重命名</el-dropdown-item>
-            <el-dropdown-item command="size">📐 重置卡片尺寸</el-dropdown-item>
-            <el-dropdown-item command="collapse">
-              {{ node.isCollapsed ? `📂 展开子树${childCount ? `（${childCount}）` : ''}` : `📦 折叠子树${descendantCount ? `（${descendantCount}）` : ''}` }}
-            </el-dropdown-item>
-            <el-dropdown-item command="delete" divided>🗑️ 删除（含子树）</el-dropdown-item>
-          </el-dropdown-menu>
-        </template>
-      </el-dropdown>
+      <span class="node-menu-btn" title="更多操作（也可右键卡片）" @click.stop="onContextMenu({ clientX: $event.clientX, clientY: $event.clientY })">⋮</span>
     </header>
+
+    <!-- 元信息行：上下文模式 + 状态徽标 + 收藏 + 快速建分支 -->
+    <div v-if="!node.isCollapsed" class="meta-bar">
+      <template v-if="node.parentId">
+        <el-tooltip content="精简：仅使用选中片段作为上下文" placement="top">
+          <span class="mode-chip" :class="{ active: node.contextMode === 'simple' }" @click="setMode('simple')">精简</span>
+        </el-tooltip>
+        <el-tooltip content="完整：继承父节点全部对话 + 选中片段" placement="top">
+          <span class="mode-chip" :class="{ active: node.contextMode === 'full' }" @click="setMode('full')">完整</span>
+        </el-tooltip>
+      </template>
+      <span class="status-badge" :class="'st-' + status.key">{{ status.text }}</span>
+      <span class="hdr-btn star-btn" :class="{ on: node.starred }" :title="node.starred ? '取消收藏' : '收藏该节点'" @click="toggleStar">
+        {{ node.starred ? '⭐' : '☆' }}
+      </span>
+      <span class="spacer"></span>
+      <el-tooltip content="直接基于本节点的对话新建一个子分支" placement="top">
+        <span class="add-child-btn" @click="addChild">＋ 子分支</span>
+      </el-tooltip>
+    </div>
 
     <div v-if="node.parentId && node.selectedContext" class="ctx-bar" :title="node.selectedContext">
       <span class="ctx-text">📌 {{ node.selectedContext }}</span>
@@ -240,6 +279,17 @@ watch(
           <div v-if="m.content.startsWith('⚠️')" class="retry-row">
             <el-button size="small" text type="primary" @click="retry">🔄 重试</el-button>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 悬停 300ms 后的全文预览浮层（卡片内滚动） -->
+    <div v-if="preview" class="node-preview" @mouseleave="leavePreview">
+      <div class="np-title">📄 全文预览</div>
+      <div class="np-body">
+        <div v-for="(m, i) in node.messages" :key="i" class="np-msg">
+          <span class="np-who">{{ m.role === 'user' ? '🙋 我' : '🤖 AI' }}</span>
+          {{ plainText(m.content).slice(0, 2000) }}
         </div>
       </div>
     </div>
