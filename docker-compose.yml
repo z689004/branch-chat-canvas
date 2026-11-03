@@ -1,0 +1,19 @@
+services:
+  canvas:
+    build:
+      context: .
+      args:
+        # 国内网络可改为 https://registry.npmmirror.com
+        NPM_REGISTRY: https://registry.npmjs.org
+    ports:
+      - "8000:8000"
+    environment:
+      # mock=演示模式（无需 Key）；改为 openai 并填 Key 即可接入真实模型
+      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.deepseek.com}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
+    volumes:
+      # 对话数据持久化到宿主机
+      - ./backend/data:/app/backend/data
+    restart: unless-stopped
