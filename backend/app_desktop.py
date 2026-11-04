@@ -734,7 +734,7 @@ def main() -> None:
         y=ball_y,
         frameless=True,
         on_top=True,
-        background_color="#2F5FD0",  # 与球渐变主色一致，加载瞬间与四角无缝
+        background_color="#0FB47E",  # 与悬浮球图标边缘主色一致，加载瞬间无缝
         resizable=False,
         easy_drag=False,
         shadow=False,

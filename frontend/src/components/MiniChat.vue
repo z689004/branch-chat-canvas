@@ -14,13 +14,6 @@
       @pointerdown.left.prevent.stop="onBallDown"
       @contextmenu.prevent.stop="openMenu"
     >
-      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-        <path d="M4 4h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H9l-5 4V6a2 2 0 0 1 2-2z"
-              fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" />
-        <circle cx="8.5" cy="10.5" r="1.1" fill="currentColor" />
-        <circle cx="12" cy="10.5" r="1.1" fill="currentColor" />
-        <circle cx="15.5" cy="10.5" r="1.1" fill="currentColor" />
-      </svg>
     </button>
 
     <!-- ============ 右键菜单（窗口临时放大，球固定在右下角） ============ -->
@@ -174,11 +167,12 @@ async function onDragUp() {
 
 async function openMenu() {
   if (menuOpen.value || expanded.value) return
+  // 先切视图再扩窗口：避免窗口已变大而球还铺满整个窗口的瞬态
+  menuOpen.value = true
   const a = api()
   if (a && a.expand_menu) {
     try { await a.expand_menu(MENU_W, MENU_H) } catch (e) { /* ignore */ }
   }
-  menuOpen.value = true
 }
 
 async function closeMenu() {
@@ -322,28 +316,28 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  /* 与球渐变同色系：Win11 系统圆角裁切与页面圆角之间的细缝不可见 */
-  background: linear-gradient(145deg, var(--primary), var(--primary-deep));
+  /* 与应用图标边缘同色系：图标透明四角与窗口系统圆角之间的细缝不可见 */
+  background: linear-gradient(145deg, #0FB47E, #067D5A);
   overflow: hidden;
   font-family: 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', sans-serif;
 }
 
-/* ---------- 悬浮球：App 图标式圆角方形，铺满窗口 ---------- */
+/* ---------- 悬浮球：直接使用应用图标（squircle），铺满窗口 ---------- */
 .mini-ball {
   width: 100%;
   height: 100%;
   padding: 0;
   border: none;
-  border-radius: 12px; /* 圆角方形（squircle），与窗口系统圆角自然衔接 */
+  border-radius: 12px; /* 与窗口系统圆角自然衔接 */
   cursor: grab;
   color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
+  /* contain + 图标同款渐变兜底：窗口尺寸瞬间异常时图标也不会被拉伸 */
   background:
-    radial-gradient(120% 120% at 30% 22%, rgba(255, 255, 255, .32), rgba(255, 255, 255, 0) 46%),
-    linear-gradient(145deg, var(--primary), var(--primary-deep));
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, .14) inset;
+    url('/icon-ball.png') center / contain no-repeat,
+    linear-gradient(145deg, #0FB47E, #067D5A);
   transition: filter .16s ease;
   -webkit-user-select: none;
   user-select: none;
@@ -352,7 +346,6 @@ onMounted(async () => {
 .mini-ball:hover { filter: brightness(1.09); }
 .mini-ball:active { filter: brightness(.94); cursor: grabbing; }
 .mini-root.dragging .mini-ball { filter: brightness(.96); cursor: grabbing; }
-.mini-ball svg { width: 20px; height: 20px; }
 
 /* ---------- 右键菜单：窗口即菜单，圆角浮层 ---------- */
 .mini-root.menu-open {
