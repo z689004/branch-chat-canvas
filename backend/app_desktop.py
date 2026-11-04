@@ -119,6 +119,34 @@ def find_window(title: str) -> int:
     return hits[0] if hits else 0
 
 
+def make_toolwindow(hwnd: int) -> bool:
+    """给窗口加 WS_EX_TOOLWINDOW：从任务栏列表、任务栏缩略图预览、Alt-Tab 中移除。
+
+    悬浮球是纯桌面小挂件，不该在任务栏占一个条目；工具窗口样式正是
+    Windows 为这类"工具浮窗"准备的。幂等：已是工具窗口则直接返回。
+    """
+    if not hwnd:
+        return False
+    try:
+        u = _user32()
+        GWL_EXSTYLE = -20
+        WS_EX_TOOLWINDOW = 0x00000080
+        style = u.GetWindowLongW(hwnd, GWL_EXSTYLE)
+        if style is None or style < 0:
+            return False
+        if style & WS_EX_TOOLWINDOW:
+            return True
+        u.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_TOOLWINDOW)
+        # FRAMECHANGED 让外壳（任务栏/Explorer）立刻感知样式变化并刷新条目
+        SWP_NOSIZE, SWP_NOMOVE, SWP_NOZORDER, SWP_FRAMECHANGED = 0x1, 0x2, 0x4, 0x20
+        u.SetWindowPos(hwnd, 0, 0, 0, 0, 0,
+                       SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_FRAMECHANGED)
+        return True
+    except Exception:  # noqa: BLE001
+        log.exception("应用工具窗口样式失败（hwnd=%s）", hwnd)
+        return False
+
+
 def window_rect(hwnd: int) -> _RECT:
     r = _RECT()
     if hwnd:
@@ -862,6 +890,18 @@ class NativeApi:
         except Exception:  # noqa: BLE001
             log.exception("应用悬浮球窗口圆角失败")
 
+    def _hide_ball_from_taskbar(self) -> None:
+        """悬浮球不占任务栏：加 WS_EX_TOOLWINDOW（幂等）。
+
+        窗口 hide/show 循环不会重置扩展样式，但保险起见每次重新显示
+        悬浮球时都再套一次，确保任何路径下都不会冒出任务栏条目。
+        """
+        hwnd = find_window(BALL_TITLE)
+        if not hwnd:
+            return
+        if make_toolwindow(hwnd):
+            log.info("悬浮球已标记为工具窗口（不占任务栏/无缩略图预览）")
+
     def set_desktop_config(self, patch: dict = None) -> dict:  # noqa: RUF013
         patch = patch or {}
         if "showBall" in patch:
@@ -891,6 +931,7 @@ class NativeApi:
                     self._ball.move(int(bx), int(by))
                     self._ball.show()
                     self._ensure_round_corners()
+                    self._hide_ball_from_taskbar()
                 else:
                     self._ball.hide()
                 log.info("悬浮球已%s", "显示" if visible else "隐藏")
@@ -919,6 +960,7 @@ class NativeApi:
                 x, y = initial_ball_pos()
                 self._ball.move(int(x), int(y))
                 self._ensure_round_corners()
+                self._hide_ball_from_taskbar()
             except Exception:  # noqa: BLE001
                 log.exception("重置悬浮球位置失败")
                 return {"ok": False}
@@ -1207,6 +1249,10 @@ def main() -> None:
             api._ensure_round_corners()  # Win11 系统圆角，窗口与球视觉无缝
         except Exception:  # noqa: BLE001
             log.exception("应用悬浮球色键透明失败")
+        try:
+            api._hide_ball_from_taskbar()  # 不占任务栏，也不出现在缩略图预览
+        except Exception:  # noqa: BLE001
+            log.exception("隐藏悬浮球任务栏条目失败")
         if not DESKTOP_CFG.get("showBall", True):
             try:
                 ball.hide()
