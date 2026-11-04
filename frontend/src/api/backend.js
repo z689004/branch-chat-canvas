@@ -35,7 +35,7 @@ export const duplicateNode = (payload) =>
 export const saveTreeSnapshot = (payload) =>
   request('/api/tree/snapshot', { method: 'POST', body: JSON.stringify(payload) })
 
-const EXT = { markdown: 'md', mermaid: 'mmd', json: 'json' }
+const EXT = { markdown: 'md', mermaid: 'mmd', json: 'json', html: 'html' }
 
 /** 导出：取回文本，由前端统一下载 */
 export async function exportTree(treeId, format) {
@@ -43,6 +43,10 @@ export async function exportTree(treeId, format) {
   if (!resp.ok) throw new Error(`导出失败(${resp.status})`)
   return { text: await resp.text(), filename: `对话树-${treeId}.${EXT[format] || 'txt'}` }
 }
+
+/** 导入 JSON 备份为新画布，返回新树 */
+export const importTree = (payload) =>
+  request('/api/tree/import', { method: 'POST', body: JSON.stringify(payload) })
 
 export const getLlmConfig = () => request('/api/llm/config')
 export const updateLlmConfig = (patch) =>

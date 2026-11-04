@@ -8,6 +8,7 @@ import json
 import os
 import uuid
 from datetime import datetime
+from html import escape
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -412,28 +413,107 @@ def tree_snapshot(body: SnapshotBody):
     return tree
 
 
-# ---------------- 导出 ----------------
+# ---------------- 导出 / 导入 ----------------
 
-def _walk(tree: dict, parent_id, depth: int, lines: list) -> None:
+def _breadcrumb(node_map: dict, node: dict) -> str:
+    """根 → 当前节点的路径文字。"""
+    chain, cur, guard = [], node, 0
+    while cur is not None and guard < 200:
+        chain.append(cur["title"])
+        pid = cur.get("parentId")
+        cur = node_map.get(pid) if pid else None
+        guard += 1
+    return " → ".join(reversed(chain))
+
+
+def _walk(tree: dict, parent_id, depth: int, lines: list, node_map: dict) -> None:
     kids = [n for n in tree["nodeList"] if n["parentId"] == parent_id]
     for n in kids:
         prefix = "#" * min(depth + 1, 6)
         lines.append(f"{prefix} {'🌿 ' if n['parentId'] else '🌱 '}{n['title']}")
+        path = _breadcrumb(node_map, n)
+        lines.append(f"`路径：{path}`")
         mode = "完整模式" if n["contextMode"] == "full" else "精简模式"
         meta = [f"上下文：{mode}"]
         if n.get("selectedContext"):
             meta.append(f"选中片段：「{n['selectedContext'][:80]}」")
-        lines.append(f"> {' ｜ '.join(meta)}")
-        for m in n.get("messages", []):
-            who = "**🙋 用户**" if m["role"] == "user" else "**🤖 AI**"
-            lines.append(f"{who}：{m['content']}\n")
+        if n.get("starred"):
+            meta.append("⭐ 收藏")
         lines.append("")
-        _walk(tree, n["nodeId"], depth + 1, lines)
+        lines.append(f"> *{' ｜ '.join(meta)}*")
+        lines.append("")
+        for m in n.get("messages", []):
+            if m["role"] == "user":
+                lines.append(f"**🙋 用户**")
+                lines.append("")
+                lines.append(m["content"])
+                lines.append("")
+            else:
+                lines.append(f"**🤖 AI**")
+                lines.append("")
+                quoted = "\n".join("> " + ln if ln.strip() else ">"
+                                   for ln in str(m["content"]).splitlines())
+                lines.append(quoted)
+                lines.append("")
+        lines.append("---")
+        lines.append("")
+        _walk(tree, n["nodeId"], depth + 1, lines, node_map)
+
+
+_HTML_TPL = """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title}</title>
+<style>
+  :root {{ --ink:#1f2329; --dim:#6b7280; --line:#e5e7eb; --root:#00b42a; --branch:#3370ff; --bg:#f7f8fa; }}
+  * {{ box-sizing: border-box; }}
+  body {{ margin:0; padding:40px 20px 80px; background:var(--bg); color:var(--ink);
+        font:15px/1.75 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }}
+  .wrap {{ max-width:900px; margin:0 auto; }}
+  header {{ margin-bottom:28px; }}
+  h1 {{ font-size:26px; margin:0 0 10px; letter-spacing:.2px; }}
+  .meta {{ color:var(--dim); font-size:13px; }}
+  .node {{ background:#fff; border:1px solid var(--line); border-left:4px solid var(--branch);
+          border-radius:10px; padding:16px 18px; margin:0 0 14px; box-shadow:0 1px 2px rgba(16,24,40,.04); }}
+  .node.root {{ border-left-color:var(--root); }}
+  .node-head {{ display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; margin-bottom:10px; }}
+  .badge {{ font-size:11px; padding:1px 7px; border-radius:20px; background:#eef2ff; color:var(--branch); }}
+  .badge.root {{ background:#e8f7ee; color:var(--root); }}
+  .node-title {{ font-weight:600; font-size:16px; }}
+  .path {{ color:var(--dim); font-size:12px; width:100%; }}
+  .ctx {{ color:var(--dim); font-size:12px; margin:0 0 10px; }}
+  .msg {{ margin:0 0 12px; }}
+  .who {{ font-size:12px; font-weight:600; color:var(--dim); margin-bottom:4px; }}
+  .bubble {{ white-space:pre-wrap; word-break:break-word; padding:10px 13px; border-radius:8px; background:#f5f6f8; }}
+  .ai .bubble {{ background:#f7fbff; border:1px solid #e8f0ff; }}
+  footer {{ text-align:center; color:var(--dim); font-size:12px; margin-top:36px; }}
+  @media print {{
+    body {{ background:#fff; padding:0; }}
+    .node {{ break-inside:avoid; box-shadow:none; }}
+    .node, .bubble {{ border-color:#ddd; }}
+  }}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>{title}</h1>
+  <div class="meta">{meta}</div>
+</header>
+{body}
+<footer>由「分支对话画布」导出 · {exported_at}</footer>
+</div>
+</body>
+</html>
+"""
 
 
 @app.get("/api/tree/export")
 def tree_export(treeId: str, format: str = "markdown"):
     tree = get_tree_or_404(treeId)
+    node_map = {n["nodeId"]: n for n in tree["nodeList"]}
 
     if format == "json":
         return JSONResponse(
@@ -443,31 +523,159 @@ def tree_export(treeId: str, format: str = "markdown"):
         )
 
     if format == "mermaid":
-        lines = ["graph TD"]
-        idmap = {}
-        for i, n in enumerate(tree["nodeList"]):
-            nid = f"n{i}"
-            idmap[n["nodeId"]] = nid
-            safe = n["title"].replace('"', "'")
-            lines.append(f'    {nid}["{safe}"]')
-        for n in tree["nodeList"]:
-            if n["parentId"] and n["parentId"] in idmap:
-                lines.append(f"    {idmap[n['parentId']]} --> {idmap[n['nodeId']]}")
+        # mindmap 更贴合金字塔树形；节点标题做转义，去掉会破坏语法的字符
+        lines = ["mindmap"]
+        roots = [n for n in tree["nodeList"] if not n["parentId"]]
+
+        def _label(t: str) -> str:
+            return str(t).replace("\n", " ").replace("(", "（").replace(")", "）") \
+                .replace("[", "【").replace("]", "】").replace(":", "：")[:40]
+
+        def emit(n, depth):
+            indent = "  " * depth
+            lines.append(f"{indent}{_label(n['title'])}")
+            for k in tree["nodeList"]:
+                if k["parentId"] == n["nodeId"]:
+                    emit(k, depth + 1)
+
+        for r in roots:
+            emit(r, 1)
         text = "\n".join(lines)
         return PlainTextResponse(
             text,
             media_type="text/plain; charset=utf-8",
-            headers={"Content-Disposition": f"attachment; filename=tree.mmd"},
+            headers={"Content-Disposition": "attachment; filename=tree.mmd"},
         )
 
-    # 默认 Markdown
-    lines = [f"# {tree['title']}（分支对话树）", ""]
-    _walk(tree, None, 1, lines)
+    if format == "html":
+        stamp = now()
+        parts = []
+
+        def emit_html(parent_id):
+            for n in tree["nodeList"]:
+                if n["parentId"] != parent_id:
+                    continue
+                is_root = not n["parentId"]
+                mode = "完整模式" if n["contextMode"] == "full" else "精简模式"
+                bits = [f"上下文：{mode}"]
+                if n.get("starred"):
+                    bits.append("⭐ 收藏")
+                if n.get("selectedContext"):
+                    bits.append(f"选中片段：「{escape(n['selectedContext'][:80])}」")
+                parts.append('<section class="node%s">' % (" root" if is_root else ""))
+                parts.append('<div class="node-head">')
+                parts.append('<span class="badge%s">%s</span>'
+                             % (" root" if is_root else "", "起始" if is_root else "分支"))
+                parts.append('<span class="node-title">%s</span>' % escape(n["title"]))
+                parts.append('<span class="path">%s</span>' % escape(_breadcrumb(node_map, n)))
+                parts.append("</div>")
+                parts.append('<p class="ctx">%s</p>' % escape(" ｜ ".join(bits)))
+                for m in n.get("messages", []):
+                    is_user = m["role"] == "user"
+                    parts.append('<div class="msg%s">' % ("" if is_user else " ai"))
+                    parts.append('<div class="who">%s</div>' % ("🙋 用户" if is_user else "🤖 AI"))
+                    parts.append('<div class="bubble">%s</div>' % escape(str(m["content"])))
+                    parts.append("</div>")
+                parts.append("</section>")
+                emit_html(n["nodeId"])
+
+        emit_html(None)
+        html_doc = _HTML_TPL.format(
+            title=escape(tree["title"]),
+            meta=escape(f"分支对话树 ｜ 共 {len(tree['nodeList'])} 个节点 ｜ 导出时间 {stamp}"),
+            body="\n".join(parts),
+            exported_at=escape(stamp),
+        )
+        return PlainTextResponse(
+            html_doc,
+            media_type="text/html; charset=utf-8",
+            headers={"Content-Disposition": "attachment; filename=tree.html"},
+        )
+
+    # 默认 Markdown：带元信息、分支路径、AI 回答引用块
+    lines = [
+        f"# {tree['title']}",
+        "",
+        f"> 分支对话树 ｜ 共 {len(tree['nodeList'])} 个节点 ｜ 导出时间 {now()}",
+        "",
+        "---",
+        "",
+    ]
+    _walk(tree, None, 1, lines, node_map)
     return PlainTextResponse(
         "\n".join(lines),
         media_type="text/markdown; charset=utf-8",
         headers={"Content-Disposition": "attachment; filename=tree.md"},
     )
+
+
+@app.post("/api/tree/import")
+def tree_import(body: dict):
+    """导入 JSON 备份为新画布（不覆盖现有数据，节点 id 全部重新分配）。"""
+    src = body.get("tree") if isinstance(body.get("tree"), dict) else body
+    if not isinstance(src, dict):
+        raise HTTPException(status_code=400, detail="备份文件格式不正确：不是有效的 JSON 对象")
+    nodes = src.get("nodeList")
+    if not isinstance(nodes, list) or not nodes:
+        raise HTTPException(status_code=400, detail="备份文件格式不正确：缺少 nodeList")
+
+    raw_ids = []
+    for n in nodes:
+        if not isinstance(n, dict) or not n.get("nodeId"):
+            raise HTTPException(status_code=400, detail="备份文件格式不正确：节点缺少 nodeId")
+        raw_ids.append(n["nodeId"])
+
+    t = now()
+    idmap = {old: f"n-{uuid.uuid4().hex[:12]}" for old in raw_ids}
+    new_nodes = []
+    seen = set()
+    for n in nodes:
+        old = n["nodeId"]
+        nid = idmap[old]
+        if nid in seen:
+            continue  # 重复节点跳过
+        seen.add(nid)
+        parent = n.get("parentId")
+        parent_new = idmap.get(parent) if parent else None
+        if parent and not parent_new:
+            parent_new = None  # 父节点缺失时挂到根层，避免断链
+        msgs = []
+        for m in n.get("messages") or []:
+            if isinstance(m, dict) and m.get("role") in ("user", "assistant"):
+                msgs.append({"role": m["role"], "content": str(m.get("content") or "")})
+        node = {
+            "nodeId": nid,
+            "parentId": parent_new,
+            "title": str(n.get("title") or "未命名节点")[:60],
+            "selectedContext": str(n.get("selectedContext") or "")[:4000],
+            "contextMode": "full" if n.get("contextMode") == "full" else "simple",
+            "messages": msgs,
+            "x": float(n.get("x") or 0),
+            "y": float(n.get("y") or 0),
+            "isCollapsed": bool(n.get("isCollapsed")),
+            "starred": bool(n.get("starred")),
+            "createTime": n.get("createTime") or t,
+            "updateTime": t,
+        }
+        if isinstance(n.get("size"), dict):
+            try:
+                node["size"] = {"w": float(n["size"]["w"]), "h": float(n["size"]["h"])}
+            except (KeyError, TypeError, ValueError):
+                pass
+        new_nodes.append(node)
+
+    title = str(src.get("title") or "导入的画布").strip() or "导入的画布"
+    if not title.endswith("（导入）"):
+        title = f"{title}（导入）"
+    tree = {
+        "treeId": f"tree-{uuid.uuid4().hex[:12]}",
+        "title": title[:60],
+        "nodeList": new_nodes,
+        "createTime": t,
+        "updateTime": t,
+    }
+    storage.save_tree(tree)
+    return tree
 
 
 # ---------------- 静态托管前端构建产物 ----------------

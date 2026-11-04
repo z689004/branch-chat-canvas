@@ -342,44 +342,204 @@ export async function deleteNodeApi(treeId, nodeId) {
   return { ok: true, deleted: doomed.size }
 }
 
-// ---------------- 导出 ----------------
+// ---------------- 导出 / 导入 ----------------
 
-function walkMarkdown(tree, parentId, depth, lines) {
+const escHtml = (s) => String(s ?? '')
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+
+function nodeMapOf(tree) {
+  const m = {}
+  for (const n of tree.nodeList) m[n.nodeId] = n
+  return m
+}
+
+function breadcrumb(map, node) {
+  const chain = []
+  let cur = node
+  let guard = 0
+  while (cur && guard < 200) {
+    chain.push(cur.title || '未命名')
+    cur = cur.parentId ? map[cur.parentId] : null
+    guard += 1
+  }
+  return chain.reverse().join(' → ')
+}
+
+function walkMarkdown(tree, parentId, depth, lines, map) {
   const kids = tree.nodeList.filter((n) => n.parentId === parentId)
   for (const n of kids) {
     lines.push(`${'#'.repeat(Math.min(depth, 6))} ${n.parentId ? '🌿 ' : '🌱 '}${n.title}`)
+    lines.push(`\`路径：${breadcrumb(map, n)}\``)
     const meta = [`上下文：${n.contextMode === 'full' ? '完整模式' : '精简模式'}`]
+    if (n.starred) meta.push('⭐ 收藏')
     if (n.selectedContext) meta.push(`选中片段：「${n.selectedContext.slice(0, 80)}」`)
-    lines.push(`> ${meta.join(' ｜ ')}`)
-    for (const m of n.messages || []) {
-      lines.push(`${m.role === 'user' ? '**🙋 用户**' : '**🤖 AI**'}：${m.content}\n`)
-    }
     lines.push('')
-    walkMarkdown(tree, n.nodeId, depth + 1, lines)
+    lines.push(`> *${meta.join(' ｜ ')}*`)
+    lines.push('')
+    for (const m of n.messages || []) {
+      if (m.role === 'user') {
+        lines.push('**🙋 用户**')
+        lines.push('')
+        lines.push(m.content)
+        lines.push('')
+      } else {
+        lines.push('**🤖 AI**')
+        lines.push('')
+        lines.push(String(m.content).split('\n').map((ln) => (ln.trim() ? `> ${ln}` : '>')).join('\n'))
+        lines.push('')
+      }
+    }
+    lines.push('---')
+    lines.push('')
+    walkMarkdown(tree, n.nodeId, depth + 1, lines, map)
   }
+}
+
+function buildHtml(tree, exportedAt) {
+  const map = nodeMapOf(tree)
+  const parts = []
+  const emit = (parentId) => {
+    for (const n of tree.nodeList.filter((x) => x.parentId === parentId)) {
+      const isRoot = !n.parentId
+      const bits = [`上下文：${n.contextMode === 'full' ? '完整模式' : '精简模式'}`]
+      if (n.starred) bits.push('⭐ 收藏')
+      if (n.selectedContext) bits.push(`选中片段：「${escHtml(n.selectedContext.slice(0, 80))}」`)
+      parts.push(`<section class="node${isRoot ? ' root' : ''}">`)
+      parts.push('<div class="node-head">')
+      parts.push(`<span class="badge${isRoot ? ' root' : ''}">${isRoot ? '起始' : '分支'}</span>`)
+      parts.push(`<span class="node-title">${escHtml(n.title)}</span>`)
+      parts.push(`<span class="path">${escHtml(breadcrumb(map, n))}</span>`)
+      parts.push('</div>')
+      parts.push(`<p class="ctx">${escHtml(bits.join(' ｜ '))}</p>`)
+      for (const m of n.messages || []) {
+        const isUser = m.role === 'user'
+        parts.push(`<div class="msg${isUser ? '' : ' ai'}">`)
+        parts.push(`<div class="who">${isUser ? '🙋 用户' : '🤖 AI'}</div>`)
+        parts.push(`<div class="bubble">${escHtml(m.content)}</div>`)
+        parts.push('</div>')
+      }
+      parts.push('</section>')
+      emit(n.nodeId)
+    }
+  }
+  emit(null)
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escHtml(tree.title)}</title>
+<style>
+  :root { --ink:#1f2329; --dim:#6b7280; --line:#e5e7eb; --root:#00b42a; --branch:#3370ff; --bg:#f7f8fa; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:40px 20px 80px; background:var(--bg); color:var(--ink);
+        font:15px/1.75 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
+  .wrap { max-width:900px; margin:0 auto; }
+  header { margin-bottom:28px; }
+  h1 { font-size:26px; margin:0 0 10px; }
+  .meta, footer { color:var(--dim); font-size:13px; }
+  .node { background:#fff; border:1px solid var(--line); border-left:4px solid var(--branch);
+          border-radius:10px; padding:16px 18px; margin:0 0 14px; box-shadow:0 1px 2px rgba(16,24,40,.04); }
+  .node.root { border-left-color:var(--root); }
+  .node-head { display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+  .badge { font-size:11px; padding:1px 7px; border-radius:20px; background:#eef2ff; color:var(--branch); }
+  .badge.root { background:#e8f7ee; color:var(--root); }
+  .node-title { font-weight:600; font-size:16px; }
+  .path { color:var(--dim); font-size:12px; width:100%; }
+  .ctx { color:var(--dim); font-size:12px; margin:0 0 10px; }
+  .msg { margin:0 0 12px; }
+  .who { font-size:12px; font-weight:600; color:var(--dim); margin-bottom:4px; }
+  .bubble { white-space:pre-wrap; word-break:break-word; padding:10px 13px; border-radius:8px; background:#f5f6f8; }
+  .ai .bubble { background:#f7fbff; border:1px solid #e8f0ff; }
+  footer { text-align:center; margin-top:36px; }
+  @media print { body { background:#fff; padding:0; } .node { break-inside:avoid; box-shadow:none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>${escHtml(tree.title)}</h1>
+  <div class="meta">分支对话树 ｜ 共 ${tree.nodeList.length} 个节点 ｜ 导出时间 ${escHtml(exportedAt)}</div>
+</header>
+${parts.join('\n')}
+<footer>由「分支对话画布」导出 · ${escHtml(exportedAt)}</footer>
+</div>
+</body>
+</html>`
 }
 
 export async function exportTree(treeId, format) {
   const tree = readTree(treeId)
+  const stamp = now()
   if (format === 'json') {
     return { text: JSON.stringify(tree, null, 2), filename: `${tree.title}.json` }
   }
   if (format === 'mermaid') {
-    const lines = ['graph TD']
-    const idmap = {}
-    tree.nodeList.forEach((n, i) => {
-      const nid = `n${i}`
-      idmap[n.nodeId] = nid
-      lines.push(`    ${nid}["${(n.title || '').replace(/"/g, "'")}"]`)
-    })
-    for (const n of tree.nodeList) {
-      if (n.parentId && idmap[n.parentId]) lines.push(`    ${idmap[n.parentId]} --> ${idmap[n.nodeId]}`)
+    const lines = ['mindmap']
+    const label = (t) => String(t || '未命名').replace(/\n/g, ' ')
+      .replace(/[()[\]:]/g, (c) => ({ '(': '（', ')': '）', '[': '【', ']': '】', ':': '：' }[c])).slice(0, 40)
+    const emit = (n, depth) => {
+      lines.push(`${'  '.repeat(depth)}${label(n.title)}`)
+      for (const k of tree.nodeList.filter((x) => x.parentId === n.nodeId)) emit(k, depth + 1)
     }
+    for (const r of tree.nodeList.filter((x) => !x.parentId)) emit(r, 1)
     return { text: lines.join('\n'), filename: `${tree.title}.mmd` }
   }
-  const lines = [`# ${tree.title}（分支对话树）`, '']
-  walkMarkdown(tree, null, 1, lines)
+  if (format === 'html') {
+    return { text: buildHtml(tree, stamp), filename: `${tree.title}.html` }
+  }
+  const lines = [
+    `# ${tree.title}`,
+    '',
+    `> 分支对话树 ｜ 共 ${tree.nodeList.length} 个节点 ｜ 导出时间 ${stamp}`,
+    '',
+    '---',
+    ''
+  ]
+  walkMarkdown(tree, null, 1, lines, nodeMapOf(tree))
   return { text: lines.join('\n'), filename: `${tree.title}.md` }
+}
+
+/** 导入 JSON 备份为新画布（节点 id 重新分配，不覆盖现有数据） */
+export async function importTree(payload) {
+  const src = payload && payload.tree && typeof payload.tree === 'object' ? payload.tree : payload
+  if (!src || typeof src !== 'object') throw new Error('备份文件格式不正确：不是有效的 JSON 对象')
+  const nodes = src.nodeList
+  if (!Array.isArray(nodes) || !nodes.length) throw new Error('备份文件格式不正确：缺少 nodeList')
+
+  const idmap = {}
+  for (const n of nodes) {
+    if (!n || !n.nodeId) throw new Error('备份文件格式不正确：节点缺少 nodeId')
+    idmap[n.nodeId] = uid()
+  }
+  const t = now()
+  const tree = newTreeObj(`${String(src.title || '导入的画布').slice(0, 50)}（导入）`)
+  tree.createTime = t
+  tree.nodeList = nodes.map((n) => {
+    const out = {
+      nodeId: idmap[n.nodeId],
+      parentId: n.parentId ? (idmap[n.parentId] || null) : null,
+      title: String(n.title || '未命名节点').slice(0, 60),
+      selectedContext: String(n.selectedContext || '').slice(0, 4000),
+      contextMode: n.contextMode === 'full' ? 'full' : 'simple',
+      messages: (Array.isArray(n.messages) ? n.messages : [])
+        .filter((m) => m && (m.role === 'user' || m.role === 'assistant'))
+        .map((m) => ({ role: m.role, content: String(m.content || '') })),
+      x: Number(n.x) || 0,
+      y: Number(n.y) || 0,
+      isCollapsed: !!n.isCollapsed,
+      starred: !!n.starred,
+      createTime: n.createTime || t,
+      updateTime: t
+    }
+    if (n.size && typeof n.size === 'object') {
+      out.size = { w: Number(n.size.w) || 340, h: Number(n.size.h) || 380 }
+    }
+    return out
+  })
+  writeTree(tree)
+  return tree
 }
 
 // ---------------- 模型配置 ----------------

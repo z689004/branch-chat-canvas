@@ -7,7 +7,7 @@ import { MiniMap } from '@vue-flow/minimap'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useTreeStore } from './store/tree'
 import {
-  exportTree, getLlmConfig, updateLlmConfig, testLlm,
+  exportTree, importTree, getLlmConfig, updateLlmConfig, testLlm,
   saveLlmProfile, deleteLlmProfile, activateLlmProfile
 } from './api'
 import ChatNode from './components/ChatNode.vue'
@@ -159,15 +159,44 @@ async function downloadText(text, filename, mime) {
 }
 
 async function doExport(format) {
+  if (format === 'import') { pickImportFile(); return }
   if (!store.treeId) return
   try {
     const { text, filename } = await exportTree(store.treeId, format)
     const mime = format === 'json' ? 'application/json'
-      : format === 'mermaid' ? 'text/plain' : 'text/markdown'
-    downloadText(text, filename, mime)
+      : format === 'html' ? 'text/html'
+        : format === 'mermaid' ? 'text/plain' : 'text/markdown'
+    const safeTitle = (store.treeTitle || '分支对话树').replace(/[\\/:*?"<>|]/g, '_')
+    const ext = filename.split('.').pop()
+    downloadText(text, `${safeTitle}.${ext}`, mime)
     ElMessage.success('已导出')
   } catch (e) {
     ElMessage.error(e.message)
+  }
+}
+
+// ---------- 导入备份 ----------
+const importInput = ref(null)
+function pickImportFile() {
+  importInput.value && importInput.value.click()
+}
+async function onImportFile(e) {
+  const file = e.target.files && e.target.files[0]
+  e.target.value = ''  // 允许重复选同一文件
+  if (!file) return
+  try {
+    const text = await file.text()
+    let data
+    try { data = JSON.parse(text) } catch (err) {
+      ElMessage.error('不是有效的 JSON 文件，请选择由本工具导出的 JSON 备份')
+      return
+    }
+    const tree = await importTree(data)
+    await store.loadTree(tree.treeId)
+    nextTick(() => fitAll(0.25, 400))
+    ElMessage.success(`已导入「${tree.title}」，共 ${tree.nodeList.length} 个节点`)
+  } catch (err) {
+    ElMessage.error(err.message || '导入失败')
   }
 }
 
@@ -680,12 +709,15 @@ onBeforeUnmount(() => {
           <el-button size="small">导出 ▾</el-button>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item command="markdown">📝 对话树 Markdown</el-dropdown-item>
-              <el-dropdown-item command="mermaid">🧩 Mermaid 导图代码</el-dropdown-item>
-              <el-dropdown-item command="json">💾 JSON（备份）</el-dropdown-item>
+              <el-dropdown-item command="markdown">📝 对话存档（Markdown）</el-dropdown-item>
+              <el-dropdown-item command="html">🌐 网页快照（可打印成 PDF）</el-dropdown-item>
+              <el-dropdown-item command="mermaid">🧩 结构图（Mermaid 导图）</el-dropdown-item>
+              <el-dropdown-item command="json" divided>💾 JSON 备份</el-dropdown-item>
+              <el-dropdown-item command="import">📥 导入备份…</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
+        <input ref="importInput" type="file" accept=".json,application/json" style="display: none" @change="onImportFile" />
         <el-tooltip content="删除当前画布的全部节点与对话（需二次确认）" placement="bottom">
           <el-button size="small" type="danger" plain @click="clearCanvas">🗑️ 清空</el-button>
         </el-tooltip>
