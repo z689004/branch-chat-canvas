@@ -42,6 +42,10 @@ class TreeUpdateBody(BaseModel):
     title: str
 
 
+class TreeClearMessagesBody(BaseModel):
+    treeId: str
+
+
 class ChildCreateBody(BaseModel):
     treeId: str
     parentId: str

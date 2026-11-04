@@ -1,8 +1,8 @@
 import { defineStore } from 'pinia'
 import {
   listTrees, createTree, getTree, createChildNode,
-  updateNodeApi, deleteNodeApi, deleteTreeApi, renameTreeApi, sendQuestionStream,
-  duplicateNode, saveTreeSnapshot
+  updateNodeApi, deleteNodeApi, deleteTreeApi, clearTreeMessages, renameTreeApi,
+  sendQuestionStream, duplicateNode, saveTreeSnapshot
 } from '../api'
 
 const LAST_TREE_KEY = 'bcc:lastTreeId'
@@ -333,8 +333,24 @@ export const useTreeStore = defineStore('tree', {
       return !n.starred
     },
 
-    /** 清空画布：删除整棵对话树 */
-    async clearCanvas() {
+    /** 清空画布：保留节点结构，只抹掉全部对话记录（可撤销） */
+    async clearMessages() {
+      if (!this.treeId) return 0
+      this.commit()
+      this.touch()
+      try {
+        const res = await clearTreeMessages(this.treeId)
+        const fresh = await getTree(this.treeId)
+        this.nodes = fresh.nodeList
+        await this.refreshTreeList()
+        return res?.cleared || 0
+      } finally {
+        this.settled()
+      }
+    },
+
+    /** 删除画布：整棵树从磁盘移除，回到欢迎页 */
+    async deleteCanvas() {
       if (!this.treeId) return
       try { await deleteTreeApi(this.treeId) } catch (e) { console.warn(e) }
       localStorage.removeItem(LAST_TREE_KEY)

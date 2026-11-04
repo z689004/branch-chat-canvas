@@ -41,8 +41,8 @@ from fastapi.staticfiles import StaticFiles
 import llm_client
 import storage
 from models import (
-    TreeCreateBody, TreeUpdateBody, ChildCreateBody, NodeUpdateBody, SendBody,
-    DuplicateBody, SnapshotBody,
+    TreeCreateBody, TreeUpdateBody, TreeClearMessagesBody, ChildCreateBody, NodeUpdateBody,
+    SendBody, DuplicateBody, SnapshotBody,
 )
 
 app = FastAPI(title="分支对话 AI 画布", version="0.1.0")
@@ -176,6 +176,24 @@ def tree_get(treeId: str):
 def tree_delete(treeId: str):
     storage.delete_tree(treeId)
     return {"ok": True}
+
+
+@app.post("/api/tree/clear-messages")
+def tree_clear_messages(body: TreeClearMessagesBody):
+    """清空画布：保留节点结构，只抹掉每个节点的对话记录。"""
+    tree = get_tree_or_404(body.treeId)
+    cleared = 0
+    touched = 0
+    for n in tree.get("nodeList", []):
+        msgs = n.get("messages") or []
+        if msgs:
+            cleared += len(msgs)
+            touched += 1
+            n["messages"] = []
+            n["updateTime"] = now()
+    tree["updateTime"] = now()
+    storage.save_tree(tree)
+    return {"ok": True, "cleared": cleared, "nodes": touched}
 
 
 # ---------------- 节点级接口 ----------------

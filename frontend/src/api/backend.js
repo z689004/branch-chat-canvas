@@ -26,6 +26,9 @@ export const deleteNodeApi = (treeId, nodeId) =>
   request(`/api/node/delete?treeId=${encodeURIComponent(treeId)}&nodeId=${encodeURIComponent(nodeId)}`, { method: 'DELETE' })
 export const deleteTreeApi = (treeId) =>
   request(`/api/tree/delete?treeId=${encodeURIComponent(treeId)}`, { method: 'DELETE' })
+/** 清空画布：保留节点结构，只清除所有节点的对话记录 */
+export const clearTreeMessages = (treeId) =>
+  request('/api/tree/clear-messages', { method: 'POST', body: JSON.stringify({ treeId }) })
 export const renameTreeApi = (treeId, title) =>
   request('/api/tree/update', { method: 'PUT', body: JSON.stringify({ treeId, title }) })
 /** 复制节点；withSubtree=true 时连同整条分支一起复制，返回新的完整节点列表 */

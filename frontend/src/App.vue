@@ -334,31 +334,62 @@ function exportBranch(nodeId) {
 }
 
 let lastClearAt = 0
-async function clearCanvas() {
+/** 清空此会话的全部对话：保留节点结构，只抹掉问答内容 */
+async function clearConversations() {
   if (!store.treeId) return
   if (Date.now() - lastClearAt < 3000) {
     ElMessage.warning('清空操作过于频繁，请稍候再试')
     return
   }
   const count = store.nodes.length
+  const msgCount = store.nodes.reduce((s, n) => s + (n.messages?.length || 0), 0)
+  if (!msgCount) {
+    ElMessage.info('当前会话还没有对话内容')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `将清空画布「${store.treeTitle || '未命名画布'}」中 ${count} 个节点的全部 ${msgCount} 条对话记录（节点与分支结构保留）。此操作可用 Ctrl + Z 撤销，确认继续？`,
+      '清空对话',
+      { type: 'warning', confirmButtonText: '确认清空', cancelButtonText: '取消' }
+    )
+  } catch (e) { return }
+  try {
+    const cleared = await store.clearMessages()
+    lastClearAt = Date.now()
+    ElMessage.success(`已清空 ${cleared} 条对话`)
+  } catch (e) {
+    ElMessage.error(e.message)
+  }
+}
+
+let lastDeleteAt = 0
+/** 删除画布：整块画布（含节点与对话）一并删除 */
+async function deleteCanvas() {
+  if (!store.treeId) return
+  if (Date.now() - lastDeleteAt < 3000) {
+    ElMessage.warning('操作过于频繁，请稍候再试')
+    return
+  }
+  const count = store.nodes.length
   try {
     await ElMessageBox.prompt(
-      `将删除画布「${store.treeTitle || '未命名画布'}」上全部 ${count} 个节点及其对话记录，且不可恢复。确认请输入：清空`,
-      '清空画布',
+      `将删除画布「${store.treeTitle || '未命名画布'}」上全部 ${count} 个节点及其对话记录，且不可恢复。确认请输入：删除`,
+      '删除画布',
       {
-        type: 'warning',
-        confirmButtonText: '确认清空',
+        type: 'error',
+        confirmButtonText: '确认删除',
         cancelButtonText: '取消',
-        inputPlaceholder: '在此输入：清空',
-        inputPattern: /^清空$/,
-        inputErrorMessage: '请输入「清空」两个字以确认删除'
+        inputPlaceholder: '在此输入：删除',
+        inputPattern: /^删除$/,
+        inputErrorMessage: '请输入「删除」两个字以确认删除'
       }
     )
   } catch (e) { return }
   try {
-    await store.clearCanvas()
-    lastClearAt = Date.now()
-    ElMessage.success('画布已清空')
+    await store.deleteCanvas()
+    lastDeleteAt = Date.now()
+    ElMessage.success('画布已删除')
   } catch (e) {
     ElMessage.error(e.message)
   }
@@ -852,8 +883,11 @@ onBeforeUnmount(() => {
             </el-dropdown-menu>
           </template>
         </el-dropdown>
-        <el-tooltip content="删除当前画布的全部节点与对话（需二次确认）" placement="bottom">
-          <el-button size="small" type="danger" plain @click="clearCanvas">🗑️ 清空</el-button>
+        <el-tooltip content="清空此会话的全部对话（节点与分支结构保留，可撤销）" placement="bottom">
+          <el-button size="small" plain @click="clearConversations">🧹 清空对话</el-button>
+        </el-tooltip>
+        <el-tooltip content="删除整个画布（含全部节点与对话，不可恢复）" placement="bottom">
+          <el-button size="small" type="danger" plain @click="deleteCanvas">🗑️ 删除画布</el-button>
         </el-tooltip>
       </div>
 
