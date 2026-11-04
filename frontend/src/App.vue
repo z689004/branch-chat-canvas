@@ -838,9 +838,13 @@ onBeforeUnmount(() => {
         </el-dropdown>
         <input ref="importInput" type="file" accept=".json,application/json" style="display: none" @change="onImportFile" />
         <el-dropdown @command="onBallCommand">
-          <el-tooltip content="桌面悬浮球：显示 / 隐藏 / 启动设置" placement="bottom">
-            <el-button size="small" :type="desktopCfg.showBall ? 'primary' : ''" :plain="desktopCfg.showBall">🎈</el-button>
-          </el-tooltip>
+          <!-- 不能用 el-tooltip 包裹触发器：dropdown 的点击事件绑不到按钮上，菜单不弹 -->
+          <el-button
+            size="small"
+            :type="desktopCfg.showBall ? 'primary' : ''"
+            :plain="desktopCfg.showBall"
+            title="桌面悬浮球：显示 / 隐藏 / 启动设置"
+          >🎈</el-button>
           <template #dropdown>
             <el-dropdown-menu>
               <el-dropdown-item command="toggle">{{ desktopCfg.showBall ? '隐藏悬浮球' : '显示悬浮球' }}</el-dropdown-item>
