@@ -63,6 +63,37 @@ def setup_logging(data_path: Path) -> None:
     )
 
 
+class NativeApi:
+    """暴露给前端 JS 的原生能力（window.pywebview.api.xxx）。
+
+    pywebview 默认拦截网页下载，因此导出走原生"另存为"对话框。
+    """
+
+    def __init__(self) -> None:
+        self._win = None
+
+    def attach(self, win) -> None:
+        self._win = win
+
+    def save_text(self, filename: str, content: str) -> str:
+        """原生保存对话框：返回保存路径；用户取消返回空字符串。"""
+        import webview
+
+        if not self._win:
+            return ""
+        result = self._win.create_file_dialog(
+            webview.SAVE_DIALOG,
+            directory=str(data_dir()),
+            save_filename=filename,
+        )
+        if not result:
+            return ""
+        path = result if isinstance(result, str) else result[0]
+        Path(path).write_text(content, encoding="utf-8")
+        logging.getLogger("desktop").info("导出保存：%s（%d 字符）", path, len(content))
+        return path
+
+
 def main() -> None:
     root = app_root()
     dpath = data_dir()
@@ -105,14 +136,19 @@ def main() -> None:
     log.info("服务就绪 %s，数据目录 %s", url, dpath)
 
     # 窗口/任务栏图标来自 exe 自身资源（--icon 打包），此处无需再设置
-    webview.create_window(
+    api = NativeApi()
+    win = webview.create_window(
         "分支对话画布",
         url,
         width=1440,
         height=900,
         min_size=(960, 620),
         background_color="#F7F8FA",
+        js_api=api,
     )
+    api.attach(win)
+    # 兜底：允许 WebView2 自带下载 UI（万一有网页式下载场景）
+    webview.settings["ALLOW_DOWNLOADS"] = True
     webview.start(
         debug=os.getenv("BCC_DEBUG") == "1",
     )

@@ -134,7 +134,20 @@ async function switchTree(treeId) {
   catch (e) { ElMessage.error(e.message) }
 }
 
-function downloadText(text, filename, mime) {
+async function downloadText(text, filename, mime) {
+  // 桌面版（pywebview）：走原生"另存为"对话框（默认拦截网页下载）
+  const pyApi = window.pywebview && window.pywebview.api
+  if (pyApi && typeof pyApi.save_text === 'function') {
+    try {
+      const saved = await pyApi.save_text(filename, text)
+      if (saved) ElMessage.success(`已保存到：${saved}`)
+      else ElMessage.info('已取消保存')
+    } catch (e) {
+      ElMessage.error('保存失败：' + (e && e.message ? e.message : e))
+    }
+    return
+  }
+  // 浏览器 / 网页版：Blob 下载
   const url = URL.createObjectURL(new Blob([text], { type: `${mime};charset=utf-8` }))
   const a = document.createElement('a')
   a.href = url
