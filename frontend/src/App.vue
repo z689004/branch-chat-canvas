@@ -373,16 +373,13 @@ async function deleteCanvas() {
   }
   const count = store.nodes.length
   try {
-    await ElMessageBox.prompt(
-      `将删除画布「${store.treeTitle || '未命名画布'}」上全部 ${count} 个节点及其对话记录，且不可恢复。确认请输入：删除`,
+    await ElMessageBox.confirm(
+      `将删除画布「${store.treeTitle || '未命名画布'}」上全部 ${count} 个节点及其对话记录，且不可恢复。确认删除？`,
       '删除画布',
       {
         type: 'error',
         confirmButtonText: '确认删除',
-        cancelButtonText: '取消',
-        inputPlaceholder: '在此输入：删除',
-        inputPattern: /^删除$/,
-        inputErrorMessage: '请输入「删除」两个字以确认删除'
+        cancelButtonText: '取消'
       }
     )
   } catch (e) { return }
