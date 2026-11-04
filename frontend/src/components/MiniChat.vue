@@ -1,7 +1,19 @@
 <template>
-  <!-- 悬浮球 / 迷你对话面板 -->
-  <div class="mini-root" :class="{ expanded }">
-    <button v-if="!expanded" class="mini-ball" title="快速对话" @click="expand">
+  <!-- 悬浮球窗口：圆球 / 右键菜单 / 迷你对话面板 -->
+  <div
+    class="mini-root"
+    :class="{ expanded, 'menu-open': menuOpen, dragging }"
+    @mousedown.self="onRootDown"
+    @contextmenu.prevent="openMenu"
+  >
+    <!-- ============ 圆球 ============ -->
+    <button
+      v-if="!expanded"
+      class="mini-ball"
+      title="左键唤起 / 收起主窗口，拖动可移动，右键更多操作"
+      @pointerdown.left.prevent.stop="onBallDown"
+      @contextmenu.prevent.stop="openMenu"
+    >
       <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true">
         <path d="M4 4h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H9l-5 4V6a2 2 0 0 1 2-2z"
               fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" />
@@ -11,7 +23,20 @@
       </svg>
     </button>
 
-    <div v-else class="mini-panel">
+    <!-- ============ 右键菜单（窗口临时放大，球固定在右下角） ============ -->
+    <transition name="bm">
+      <div v-if="menuOpen && !expanded" class="ball-menu" @mousedown.stop @contextmenu.prevent.stop>
+        <button class="bm-item" @click="quickChat"><span>⚡</span>快速对话</button>
+        <button class="bm-item" @click="menuOpenMain"><span>🖥️</span>打开主界面</button>
+        <button class="bm-item" @click="menuHideBall"><span>👁️</span>隐藏悬浮球</button>
+        <div class="bm-sep"></div>
+        <button class="bm-item danger" @click="menuQuit"><span>⏻</span>退出程序</button>
+        <div class="bm-tip">左键点击唤起 / 收起主窗口<br />按住可拖动，靠近边缘自动吸附</div>
+      </div>
+    </transition>
+
+    <!-- ============ 迷你对话面板 ============ -->
+    <div v-if="expanded" class="mini-panel">
       <header class="mini-head">
         <span class="mini-dot"></span>
         <b>快速对话</b>
@@ -57,8 +82,13 @@ const renderMd = (s) => md.render(s || '')
 
 const MINI_KEY = 'bcc:miniTreeId'
 const MINI_TITLE = '悬浮速记'
+// 与后端 MENU_SIZE 保持一致：右键菜单展开时需要的窗口尺寸
+const MENU_W = 212
+const MENU_H = 306
 
 const expanded = ref(false)
+const menuOpen = ref(false)
+const dragging = ref(false)
 const sending = ref(false)
 const draft = ref('')
 const messages = ref([])
@@ -75,13 +105,124 @@ function scrollBottom() {
   })
 }
 
-async function expand() {
+// ---------------- 圆球交互 ----------------
+
+const CLICK_TOL = 4       // 位移小于该值视为"点击"
+const DRAG_INTERVAL = 28  // 拖拽移动节流（毫秒）
+
+let dragState = null
+
+/**
+ * 按下圆球：捕获指针后进入拖拽。
+ * - 移动 → 实时移动窗口（屏幕坐标差值，绝对定位不累积误差）
+ * - 未移动（点击）→ 唤起 / 收起主窗口
+ */
+async function onBallDown(e) {
+  if (e.button !== 0) return
+  if (menuOpen.value) {
+    await closeMenu()
+    return
+  }
+  const a = api()
+  if (!a || !a.toggle_main) return
+  try { e.currentTarget.setPointerCapture(e.pointerId) } catch (err) { /* ignore */ }
+  dragState = { startX: e.screenX, startY: e.screenY, moved: false, lastMove: 0, winX: null, winY: null }
+  dragging.value = true
+  if (a.get_ball_pos) {
+    try {
+      const p = await a.get_ball_pos()
+      if (dragState) { dragState.winX = p.x; dragState.winY = p.y }
+    } catch (err) { /* ignore */ }
+  }
+  window.addEventListener('pointermove', onDragMove)
+  window.addEventListener('pointerup', onDragUp)
+  window.addEventListener('pointercancel', onDragUp)
+}
+
+function onDragMove(e) {
+  if (!dragState) return
+  const dx = e.screenX - dragState.startX
+  const dy = e.screenY - dragState.startY
+  if (!dragState.moved && Math.abs(dx) < CLICK_TOL && Math.abs(dy) < CLICK_TOL) return
+  dragState.moved = true
+  const now = performance.now()
+  if (now - dragState.lastMove < DRAG_INTERVAL) return
+  dragState.lastMove = now
+  const a = api()
+  if (a && a.move_ball && dragState.winX != null) {
+    a.move_ball(dragState.winX + dx, dragState.winY + dy)
+  }
+}
+
+async function onDragUp() {
+  window.removeEventListener('pointermove', onDragMove)
+  window.removeEventListener('pointerup', onDragUp)
+  window.removeEventListener('pointercancel', onDragUp)
+  const st = dragState
+  dragState = null
+  dragging.value = false
+  const a = api()
+  if (!st || !a) return
+  if (!st.moved) {
+    // 点击：唤起 / 收起主窗口
+    if (a.toggle_main) await a.toggle_main()
+  } else if (a.end_drag) {
+    // 拖完：贴边吸附 + 记住位置
+    await a.end_drag()
+  }
+}
+
+async function openMenu() {
+  if (menuOpen.value || expanded.value) return
+  const a = api()
+  if (a && a.expand_menu) {
+    try { await a.expand_menu(MENU_W, MENU_H) } catch (e) { /* ignore */ }
+  }
+  menuOpen.value = true
+}
+
+async function closeMenu() {
+  if (!menuOpen.value) return
+  menuOpen.value = false
+  const a = api()
+  if (a && a.collapse_menu) {
+    try { await a.collapse_menu() } catch (e) { /* ignore */ }
+  }
+}
+
+function onRootDown() {
+  if (menuOpen.value) closeMenu()
+}
+
+// ---------------- 右键菜单项 ----------------
+
+async function quickChat() {
+  menuOpen.value = false
+  expanded.value = true
   const a = api()
   if (a && a.toggle_mini) await a.toggle_mini(true)
-  expanded.value = true
-  await ensureTree()
+  try { await ensureTree() } catch (e) { /* 后端未就绪 */ }
   scrollBottom()
 }
+
+async function menuOpenMain() {
+  await closeMenu()
+  const a = api()
+  if (a && a.open_main) await a.open_main(treeId.value || '')
+}
+
+async function menuHideBall() {
+  await closeMenu()
+  const a = api()
+  if (a && a.show_ball) await a.show_ball(false)
+}
+
+async function menuQuit() {
+  const a = api()
+  if (a && a.quit_app) await a.quit_app()
+}
+
+// ---------------- 面板 ----------------
 
 async function collapse() {
   expanded.value = false
@@ -98,7 +239,7 @@ async function openMain() {
 /** 取用/创建「悬浮速记」画布，并取它的根节点作为对话载体 */
 async function ensureTree() {
   if (treeId.value && nodeId) return
-  let id = localStorage.getItem(MINI_KEY) || ''
+  const id = localStorage.getItem(MINI_KEY) || ''
   if (id) {
     try {
       const t = await getTree(id)
@@ -160,6 +301,7 @@ onMounted(async () => {
 
 <style scoped>
 .mini-root {
+  position: relative;
   width: 100%;
   height: 100%;
   display: flex;
@@ -175,7 +317,7 @@ onMounted(async () => {
   height: 60px;
   border-radius: 50%;
   border: none;
-  cursor: pointer;
+  cursor: grab;
   color: #fff;
   display: flex;
   align-items: center;
@@ -187,7 +329,60 @@ onMounted(async () => {
   user-select: none;
 }
 .mini-ball:hover { transform: scale(1.07); box-shadow: 0 8px 22px rgba(47, 95, 208, .55), 0 0 0 1px rgba(255,255,255,.3) inset; }
-.mini-ball:active { transform: scale(.96); }
+.mini-ball:active { transform: scale(.96); cursor: grabbing; }
+.mini-root.dragging .mini-ball { transform: scale(.98); cursor: grabbing; }
+
+/* ---------- 右键菜单：窗口放大后球贴右下角 ---------- */
+.mini-root.menu-open {
+  align-items: flex-end;
+  justify-content: flex-end;
+  padding: 12px;
+  box-sizing: border-box;
+}
+
+.ball-menu {
+  position: absolute;
+  right: 10px;
+  bottom: 88px;
+  width: 188px;
+  padding: 6px;
+  border-radius: 12px;
+  background: #fff;
+  border: 1px solid #e6e9ef;
+  box-shadow: 0 12px 34px rgba(16, 24, 40, .2);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  user-select: none;
+}
+.bm-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #1f2329;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+.bm-item span { font-size: 13px; width: 16px; text-align: center; }
+.bm-item:hover { background: #eef2ff; color: #2f5fd0; }
+.bm-item.danger:hover { background: #ffece8; color: #f53f3f; }
+.bm-sep { height: 1px; background: #eef0f4; margin: 4px 6px; }
+.bm-tip {
+  padding: 4px 10px 2px;
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: #a5adba;
+}
+
+.bm-enter-active, .bm-leave-active { transition: opacity .12s ease, transform .12s ease; }
+.bm-enter-from, .bm-leave-to { opacity: 0; transform: translateY(6px); }
 
 /* ---------- 展开面板 ---------- */
 .mini-root.expanded {
@@ -197,6 +392,7 @@ onMounted(async () => {
   justify-content: flex-start;
   box-shadow: 0 10px 30px rgba(16, 24, 40, .16);
   overflow: hidden;
+  padding: 0;
 }
 .mini-panel { display: flex; flex-direction: column; width: 100%; height: 100%; background: #fff; }
 

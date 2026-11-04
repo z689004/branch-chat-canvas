@@ -453,6 +453,22 @@ body {
 .chips-label { font-size: 12px; color: var(--text-dim); }
 .model-chip { cursor: pointer; }
 
+/* ---------- 桌面设置（悬浮球 / 开机启动） ---------- */
+.set-row {
+  display: flex; align-items: center; gap: 16px;
+  padding: 14px 2px;
+  border-bottom: 1px solid var(--border);
+}
+.set-row:last-of-type { border-bottom: none; }
+.set-text { flex: 1; min-width: 0; }
+.set-title { font-size: 13.5px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+.set-desc { font-size: 12px; line-height: 1.6; color: var(--text-dim); }
+.set-note {
+  margin-top: 12px; padding: 8px 10px; border-radius: 8px;
+  background: var(--bg-subtle); border: 1px solid var(--border);
+  font-size: 12px; color: var(--text-dim);
+}
+
 /* ---------- 欢迎页 ---------- */
 .welcome {
   position: absolute; inset: 0;

@@ -175,22 +175,75 @@ async function doExport(format) {
   }
 }
 
-// ---------- 桌面悬浮球 ----------
-const ballVisible = ref(true)
-function toggleBall() {
-  const api = window.pywebview && window.pywebview.api
-  if (!api || !api.hide_ball) {
-    ElMessage.info('悬浮球为桌面版专属功能，网页版不可用')
+// ---------- 桌面壳：悬浮球 / 开机启动 ----------
+const desktopCfg = reactive({
+  available: false,
+  showBall: true,
+  autoStart: false,
+  ballVisible: true,
+  canAutoStart: false
+})
+const desktopDialog = ref(false)
+
+function desktopApi() {
+  return (window.pywebview && window.pywebview.api) || null
+}
+
+async function refreshDesktop() {
+  const a = desktopApi()
+  if (!a || !a.get_desktop_config) return
+  try {
+    Object.assign(desktopCfg, await a.get_desktop_config())
+  } catch (e) { /* 非桌面环境，忽略 */ }
+}
+
+async function toggleBall(value) {
+  const a = desktopApi()
+  if (!a || !a.set_desktop_config) {
+    ElMessage.info('悬浮球是桌面版专属功能，网页版不可用')
     return
   }
-  if (ballVisible.value) {
-    api.hide_ball()
-    ballVisible.value = false
-    ElMessage.info('已隐藏悬浮球')
-  } else {
-    api.show_ball()
-    ballVisible.value = true
-    ElMessage.success('悬浮球已显示在屏幕右下角')
+  const want = value === undefined ? !desktopCfg.showBall : !!value
+  try {
+    Object.assign(desktopCfg, await a.set_desktop_config({ showBall: want }))
+    if (want) ElMessage.success('悬浮球已显示在桌面')
+    else ElMessage.info('已隐藏悬浮球，可在「🎈 → 悬浮球设置」重新打开')
+  } catch (e) {
+    ElMessage.error(e.message || '切换悬浮球失败')
+  }
+}
+
+async function toggleAutoStart(value) {
+  const a = desktopApi()
+  if (!a || !a.set_desktop_config) {
+    ElMessage.info('开机启动仅在桌面版可用')
+    return
+  }
+  try {
+    Object.assign(desktopCfg, await a.set_desktop_config({ autoStart: !!value }))
+    if (value && !desktopCfg.autoStart) ElMessage.warning('写入开机启动失败，请检查系统权限')
+    else ElMessage.success(value ? '已开启开机自启：登录后自动显示悬浮球' : '已关闭开机自启')
+  } catch (e) {
+    ElMessage.error(e.message || '设置开机启动失败')
+  }
+}
+
+async function resetBallPos() {
+  const a = desktopApi()
+  if (!a || !a.reset_ball_pos) return
+  try {
+    await a.reset_ball_pos()
+    ElMessage.success('悬浮球已回到屏幕右下角')
+  } catch (e) {
+    ElMessage.error(e.message || '重置失败')
+  }
+}
+
+function onBallCommand(cmd) {
+  if (cmd === 'toggle') toggleBall()
+  else if (cmd === 'settings') {
+    refreshDesktop()
+    desktopDialog.value = true
   }
 }
 
@@ -633,6 +686,10 @@ onMounted(() => {
   document.addEventListener('keydown', onKeydown)
   document.addEventListener('keyup', onKeyup)
   document.addEventListener('mousedown', onDocMouseDown)
+  // pywebview 注入 API 晚于 Vue 挂载，事件与轮询双保险
+  window.addEventListener('pywebviewready', refreshDesktop)
+  refreshDesktop()
+  setTimeout(refreshDesktop, 800)
   refreshLlm()
   // 悬浮球面板点击「在主窗口打开」时，由桌面壳调用此方法切换画布
   window.__openTreeFromMini = async (treeId) => {
@@ -651,6 +708,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('keydown', onKeydown)
   document.removeEventListener('keyup', onKeyup)
   document.removeEventListener('mousedown', onDocMouseDown)
+  window.removeEventListener('pywebviewready', refreshDesktop)
   delete window.__openTreeFromMini
   cancelBranchHide()
 })
@@ -745,9 +803,17 @@ onBeforeUnmount(() => {
           </template>
         </el-dropdown>
         <input ref="importInput" type="file" accept=".json,application/json" style="display: none" @change="onImportFile" />
-        <el-tooltip content="显示/隐藏桌面悬浮球（屏幕右下角，点开可随时对话）" placement="bottom">
-          <el-button size="small" :type="ballVisible ? 'primary' : 'default'" :plain="ballVisible" @click="toggleBall">🎈</el-button>
-        </el-tooltip>
+        <el-dropdown @command="onBallCommand">
+          <el-tooltip content="桌面悬浮球：显示 / 隐藏 / 启动设置" placement="bottom">
+            <el-button size="small" :type="desktopCfg.showBall ? 'primary' : ''" :plain="desktopCfg.showBall">🎈</el-button>
+          </el-tooltip>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="toggle">{{ desktopCfg.showBall ? '隐藏悬浮球' : '显示悬浮球' }}</el-dropdown-item>
+              <el-dropdown-item command="settings">悬浮球设置…</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
         <el-tooltip content="删除当前画布的全部节点与对话（需二次确认）" placement="bottom">
           <el-button size="small" type="danger" plain @click="clearCanvas">🗑️ 清空</el-button>
         </el-tooltip>
@@ -1006,6 +1072,48 @@ onBeforeUnmount(() => {
 
       <template #footer>
         <el-button @click="llmDialog = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 悬浮球 / 启动设置（桌面版专属） -->
+    <el-dialog v-model="desktopDialog" title="🎈 悬浮球与启动设置" width="540px">
+      <el-alert
+        v-if="!desktopCfg.available"
+        type="info" :closable="false" show-icon
+        title="当前在浏览器中运行，悬浮球是桌面版专属能力"
+        description="双击 BranchChatCanvas.exe 打开桌面版，即可使用置顶悬浮球、拖拽吸附与开机自启。"
+        style="margin-bottom: 16px;"
+      />
+      <div class="set-row">
+        <div class="set-text">
+          <div class="set-title">显示悬浮球</div>
+          <div class="set-desc">置顶小圆球，始终浮在其他软件之上；左键唤起 / 收起主窗口，右键更多操作</div>
+        </div>
+        <el-switch :model-value="desktopCfg.showBall" :disabled="!desktopCfg.available" @change="toggleBall" />
+      </div>
+      <div class="set-row">
+        <div class="set-text">
+          <div class="set-title">开机自动启动</div>
+          <div class="set-desc">登录 Windows 后自动在后台启动，只显示悬浮球、不弹出主窗口</div>
+        </div>
+        <el-switch
+          :model-value="desktopCfg.autoStart"
+          :disabled="!desktopCfg.available || !desktopCfg.canAutoStart"
+          @change="toggleAutoStart"
+        />
+      </div>
+      <div class="set-row">
+        <div class="set-text">
+          <div class="set-title">悬浮球位置</div>
+          <div class="set-desc">按住可拖动，靠近屏幕边缘会自动吸附；位置会被记住</div>
+        </div>
+        <el-button size="small" :disabled="!desktopCfg.available" @click="resetBallPos">回到右下角</el-button>
+      </div>
+      <div v-if="desktopCfg.available && !desktopCfg.canAutoStart" class="set-note">
+        提示：源码运行模式下「开机启动」不可用，请使用打包后的 exe。
+      </div>
+      <template #footer>
+        <el-button type="primary" @click="desktopDialog = false">知道了</el-button>
       </template>
     </el-dialog>
   </div>
