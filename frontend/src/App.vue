@@ -11,10 +11,13 @@ import {
 } from './api'
 import ChatNode from './components/ChatNode.vue'
 import NotePanel from './components/NotePanel.vue'
+import SettingsHub from './components/SettingsHub.vue'
 import { useNotesStore } from './store/notes'
+import { useAppearanceStore } from './store/appearance'
 
 const store = useTreeStore()
 const notes = useNotesStore()
+const appearance = useAppearanceStore()
 const { fitView, viewport, zoomIn, zoomOut, getSelectedNodes } = useVueFlow()
 
 /** 适应视图：缩放到刚好装下全部节点，但最多放大到 100%，避免小画布被拉得过大 */
@@ -30,13 +33,14 @@ const flowNodes = computed(() =>
   }))
 )
 
-/** 连线按分支类型区分样式：精简（片段上下文）= 实线，完整（继承全对话）= 圆点虚线 */
+/** 连线按分支类型区分样式：精简（片段上下文）= 实线，完整（继承全对话）= 圆点虚线
+ *  自定义配色开启时，连线统一用自定义色（仍靠虚实线区分模式） */
 const flowEdges = computed(() =>
   store.visibleNodes
     .filter(n => n.parentId && store.nodeMap[n.parentId])
     .map(n => {
       const full = n.contextMode === 'full'
-      const color = full ? '#00b42a' : '#165dff'
+      const color = appearance.edgeColor || (full ? '#00b42a' : '#165dff')
       return {
         id: `e-${n.parentId}-${n.nodeId}`,
         source: n.parentId,
@@ -694,6 +698,15 @@ function toggleTheme() {
   document.documentElement.setAttribute('data-theme', theme.value)
   document.documentElement.classList.toggle('dark', theme.value === 'dark')
 }
+/** 设置面板 / 对话框统一走这里切主题（幂等） */
+function setTheme(t) {
+  if (t !== theme.value) toggleTheme()
+}
+/** 设置面板里切「自动整理」：与工具栏原逻辑一致（持久化 + 开启时重排） */
+function setAutoTidy(v) {
+  autoTidy.value = !!v
+  onAutoTidyChange(v)
+}
 function toggleMinimap() {
   showMinimap.value = !showMinimap.value
   nextTick(() => fitAll(0.25, 300))
@@ -869,32 +882,34 @@ onBeforeUnmount(() => {
 
       <div class="tb-divider"></div>
 
-      <!-- 分组二：布局与视图 -->
+      <!-- 分组二：布局与视图（自动整理 / 网格 / 小地图 / 主题已收进 ⚙️ 设置面板） -->
       <div class="tb-group">
-        <el-tooltip content="新建分支后自动按金字塔排布；取消勾选可手动自由摆放" placement="bottom">
-          <el-checkbox v-model="autoTidy" size="small" @change="onAutoTidyChange">自动整理</el-checkbox>
-        </el-tooltip>
         <el-tooltip content="一键重排：根在顶部居中，逐层向下展开" placement="bottom">
           <el-button size="small" @click="tidyLayout">✨ 整理布局</el-button>
         </el-tooltip>
         <el-tooltip content="缩放到刚好装下全部节点（快捷键 F）" placement="bottom">
           <el-button size="small" @click="fitAll(0.25, 300)">适应视图</el-button>
         </el-tooltip>
-        <el-tooltip content="显示 / 隐藏右下角小地图（可按类型着色、拖拽跳转）" placement="bottom">
-          <el-button size="small" :type="showMinimap ? 'primary' : ''" plain @click="toggleMinimap">🗺️</el-button>
-        </el-tooltip>
-        <el-tooltip content="显示 / 隐藏画布网格" placement="bottom">
-          <el-button size="small" :type="showGrid ? 'primary' : ''" plain @click="toggleGrid">▦</el-button>
-        </el-tooltip>
-        <el-tooltip :content="theme === 'dark' ? '切换到浅色主题' : '切换到深色主题'" placement="bottom">
-          <el-button size="small" plain @click="toggleTheme">{{ theme === 'dark' ? '☀️' : '🌙' }}</el-button>
-        </el-tooltip>
       </div>
 
       <div class="spacer"></div>
 
-      <!-- 分组三：操作（靠右） -->
+      <!-- 分组三：操作（靠右；⚙️ 设置放最前，窗口缩窄时它必须保持可见） -->
       <div class="tb-group">
+        <SettingsHub
+          :theme="theme"
+          :auto-tidy="autoTidy"
+          :show-grid="showGrid"
+          :show-minimap="showMinimap"
+          @set-theme="setTheme"
+          @set-auto-tidy="setAutoTidy"
+          @toggle-grid="toggleGrid"
+          @toggle-minimap="toggleMinimap"
+          @open-llm="openLlmDialog"
+          @open-ball="onBallCommand('settings')"
+          @clear-chat="clearConversations"
+          @delete-canvas="deleteCanvas"
+        />
         <el-tooltip content="撤销上一步操作（Ctrl + Z）" placement="bottom">
           <el-button size="small" :disabled="!store.canUndo" @click="doUndo">↶</el-button>
         </el-tooltip>
@@ -917,6 +932,7 @@ onBeforeUnmount(() => {
         <el-dropdown @command="onBallCommand">
           <!-- 不能用 el-tooltip 包裹触发器：dropdown 的点击事件绑不到按钮上，菜单不弹 -->
           <el-button
+            class="tb-optional"
             size="small"
             :type="desktopCfg.showBall ? 'primary' : ''"
             :plain="desktopCfg.showBall"
@@ -930,10 +946,10 @@ onBeforeUnmount(() => {
           </template>
         </el-dropdown>
         <el-tooltip content="清空整个会话：删除全部分支与对话，只留一个空白根会话（可撤销）" placement="bottom">
-          <el-button size="small" plain @click="clearConversations">🧹 清空对话</el-button>
+          <el-button class="tb-optional" size="small" plain @click="clearConversations">🧹 清空对话</el-button>
         </el-tooltip>
         <el-tooltip content="删除整个画布（含全部节点与对话，不可恢复）" placement="bottom">
-          <el-button size="small" type="danger" plain @click="deleteCanvas">🗑️ 删除画布</el-button>
+          <el-button class="tb-optional" size="small" type="danger" plain @click="deleteCanvas">🗑️ 删除画布</el-button>
         </el-tooltip>
       </div>
 
@@ -941,7 +957,7 @@ onBeforeUnmount(() => {
 
       <el-popover placement="bottom-end" width="300" trigger="click">
         <template #reference>
-          <el-button size="small" plain>⌨️</el-button>
+          <el-button class="tb-optional" size="small" plain>⌨️</el-button>
         </template>
         <div class="kbd-list">
           <div class="kbd-row"><span>适应视图</span><b>F</b></div>
@@ -959,13 +975,23 @@ onBeforeUnmount(() => {
       </el-popover>
 
       <el-tooltip content="管理多个密钥档案：添加 / 测试 / 切换当前使用的模型" placement="bottom">
-        <el-button size="small" :type="llmInfo.provider === 'mock' ? 'warning' : 'success'" plain @click="openLlmDialog">
+        <el-button class="tb-optional" size="small" :type="llmInfo.provider === 'mock' ? 'warning' : 'success'" plain @click="openLlmDialog">
           {{ llmInfo.provider === 'mock' ? '🧪 演示模式' : (llmInfo.activeName || providerLabel[llmInfo.provider] || llmInfo.provider) }}
         </el-button>
       </el-tooltip>
     </header>
 
-    <div class="canvas-wrap" :class="{ 'space-pan': spaceDown }" @wheel="onWheel">
+    <div
+      class="canvas-wrap"
+      :class="{ 'space-pan': spaceDown, 'has-bg': appearance.hasBg }"
+      @wheel="onWheel"
+    >
+      <!-- 自定义画布背景：垫在最底层，透明度可调，叠在主题底色之上 -->
+      <div
+        v-if="appearance.hasBg"
+        class="canvas-bg"
+        :style="{ backgroundImage: `url(${appearance.bgImage})`, opacity: appearance.bgOpacity / 100 }"
+      ></div>
       <VueFlow
         v-if="store.treeId"
         :nodes="flowNodes"

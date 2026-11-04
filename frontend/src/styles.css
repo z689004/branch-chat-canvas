@@ -153,12 +153,14 @@ body {
 .ctx-item.danger:hover { background: rgba(245, 63, 63, 0.12); }
 
 /* ---------- 节点卡片 ---------- */
+/* 底色/边框/文字走节点级变量：自定义配色开启时被覆盖，关闭时回落主题变量 */
 .chat-node {
   position: relative;
   width: 340px;
-  background: var(--bg-panel);
+  background: var(--node-bg, var(--bg-panel));
   border-radius: 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--node-border, var(--border));
+  color: var(--node-text, var(--text));
   box-shadow: var(--shadow-node);
   display: flex; flex-direction: column;
   overflow: hidden;
@@ -218,7 +220,7 @@ body {
 .node-header.is-branch { background: var(--branch-head); }
 .node-icon { font-size: 13px; }
 .node-title {
-  flex: 1; font-size: 13px; font-weight: 600; color: var(--text);
+  flex: 1; font-size: 13px; font-weight: 600; color: var(--node-text, var(--text));
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   cursor: text; min-width: 0;
 }
@@ -319,7 +321,7 @@ body {
 }
 .assistant-bubble {
   background: var(--bg-panel); border: 1px solid var(--border); padding: 8px 12px;
-  border-bottom-left-radius: 2px; word-break: break-word; color: var(--text);
+  border-bottom-left-radius: 2px; word-break: break-word; color: var(--node-text, var(--text));
 }
 .typing { animation: blink 0.8s infinite; color: var(--primary); }
 @keyframes blink { 50% { opacity: 0.2; } }
@@ -697,3 +699,79 @@ html[data-theme="dark"] .np-mini.danger:hover { background: rgba(247, 101, 96, 0
 .msg:hover .msg-note-btn { opacity: 0.55; }
 .msg-note-btn:hover { opacity: 1; background: var(--bg-subtle); }
 .msg.user .msg-note-btn { order: -1; }
+
+/* ---------- 设置中心：悬浮面板（Teleport 到 body，fixed 定位右对齐按钮） ---------- */
+.settings-hub { display: inline-flex; }
+.settings-hub-anchor { display: inline-flex; }
+/* 收纳态：隐藏低频工具栏按钮（其入口已收进设置面板「更多」） */
+.toolbar.compact-mode .tb-optional { display: none !important; }
+/* 收纳态：压缩画布名与下拉框宽度，尽量保住右侧按钮完整 */
+.toolbar.compact-mode .tree-name { max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
+.toolbar.compact-mode .tb-group .el-select { width: 110px !important; }
+.shub-pop {
+  position: fixed; z-index: 2500; width: 420px;
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: var(--shadow-pop); padding: 6px 4px;
+  animation: pop-in-menu 0.12s ease-out;
+}
+/* 响应式收纳：窗口小 / 工具栏空间不足 → 单列下拉列表 */
+.shub-pop.compact { width: 236px; }
+.shub-sec-title {
+  font-size: 11px; font-weight: 600; color: var(--text-faint);
+  padding: 8px 12px 4px; letter-spacing: 0.4px;
+}
+.shub-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 2px 6px; padding: 0 6px;
+}
+.shub-pop.compact .shub-grid { grid-template-columns: 1fr; }
+.shub-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px; border-radius: 8px; font-size: 13px; color: var(--text);
+}
+.shub-item:hover { background: var(--bg-subtle); }
+.si-ico { flex: none; font-size: 13px; }
+.si-label {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  cursor: pointer;
+}
+.shub-entry { cursor: pointer; }
+.shub-entry:hover .si-label { color: var(--primary); }
+.shub-foot {
+  padding: 8px 12px 4px; font-size: 11px; color: var(--text-faint);
+  border-top: 1px solid var(--border-soft); margin-top: 6px;
+}
+
+/* ---------- 画布自定义背景 ---------- */
+.canvas-bg {
+  position: absolute; inset: 0; z-index: 0;
+  background-size: cover; background-position: center; background-repeat: no-repeat;
+  pointer-events: none;
+}
+.canvas-wrap.has-bg .vue-flow {
+  background: transparent;
+  position: relative; z-index: 1;  /* 保证画布内容绘制在背景图之上 */
+}
+
+/* ---------- 主题与画布背景对话框 ---------- */
+.sh-dialog-sec { margin-bottom: 18px; }
+.sh-dialog-sec:last-of-type { margin-bottom: 0; }
+.sh-dialog-title { font-size: 13.5px; font-weight: 600; color: var(--text); margin-bottom: 10px; }
+.sh-dialog-desc { font-size: 12px; color: var(--text-dim); line-height: 1.7; margin-top: 8px; }
+.bg-row { display: flex; align-items: center; gap: 14px; }
+.bg-thumb {
+  width: 132px; height: 76px; border-radius: 8px; flex: none;
+  border: 1px solid var(--border);
+  background-size: cover; background-position: center; background-repeat: no-repeat;
+  background-color: var(--bg-sub);
+}
+.bg-ops { display: flex; flex-direction: column; gap: 8px; }
+.bg-empty { flex: 1; font-size: 12.5px; color: var(--text-dim); line-height: 1.6; }
+.bg-opacity-row { display: flex; align-items: center; margin-top: 14px; }
+.bg-opacity-label { font-size: 12.5px; color: var(--text-sub); flex: none; }
+.bg-opacity-val { font-size: 12.5px; color: var(--text); flex: none; min-width: 40px; text-align: right; }
+.color-row {
+  display: flex; align-items: center; gap: 12px; padding: 6px 0;
+}
+.color-label { font-size: 12.5px; color: var(--text-sub); width: 72px; flex: none; }
+.color-val { font-size: 12px; color: var(--text-dim); font-family: Consolas, monospace; }
+.color-ops { margin-top: 8px; }
