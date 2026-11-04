@@ -10,6 +10,7 @@ const draftRef = ref(null)
 const editingId = ref('')
 const editDraft = ref('')
 const expanded = ref({})        // 长笔记展开状态
+const filter = ref('all')       // 分类筛选：all / node / excerpt / manual
 const now = ref(Date.now())
 let ticker = null
 
@@ -20,10 +21,11 @@ onBeforeUnmount(() => {
   clearInterval(ticker)
 })
 
-// 打开面板时把搜索词清掉，避免"上次搜完忘了"看不到全部
+// 打开面板时把搜索词与筛选清掉，避免"上次搜完忘了"看不到全部
 watch(() => notes.panelOpen, (open) => {
   if (open) {
     notes.keyword = ''
+    filter.value = 'all'
     nextTick(() => draftRef.value?.focus())
   } else {
     editingId.value = ''
@@ -46,12 +48,18 @@ function relTime(iso) {
 
 function sourceLabel(n) {
   if (!n.source) return '✍️ 手动记录'
+  if (n.kind === 'node' || n.source.role === 'node') {
+    return `⭐ 「${n.source.treeTitle}」· ${n.source.nodeTitle}`
+  }
   const who = n.source.role === 'user' ? '我' : 'AI'
   return `📎 「${n.source.treeTitle}」· ${n.source.nodeTitle} · ${who}`
 }
 
 function sourceTitle(n) {
   if (!n.source) return '自己写下的备忘'
+  if (n.kind === 'node' || n.source.role === 'node') {
+    return `收藏的整个节点：来自画布「${n.source.treeTitle}」的「${n.source.nodeTitle}」（收藏时的对话快照）`
+  }
   return `来自画布「${n.source.treeTitle}」的节点「${n.source.nodeTitle}」（${n.source.role === 'user' ? '我的提问' : 'AI 回答'}）`
 }
 
@@ -132,8 +140,23 @@ async function clearAll() {
   } catch (e) { /* 取消 */ }
 }
 
+// 关键词搜索 + 分类筛选 的组合结果
+const list = computed(() => {
+  return filter.value === 'all'
+    ? notes.filtered
+    : notes.filtered.filter(n => n.kind === filter.value)
+})
+
+const filters = computed(() => ([
+  { key: 'all', label: '全部', count: notes.count },
+  { key: 'node', label: '⭐ 节点', count: notes.nodeCount },
+  { key: 'excerpt', label: '📌 摘录', count: notes.excerptCount },
+  { key: 'manual', label: '✍️ 手动', count: notes.count - notes.nodeCount - notes.excerptCount }
+]))
+
 const isEmpty = computed(() => notes.count === 0)
-const noMatch = computed(() => notes.count > 0 && notes.filtered.length === 0)
+const noMatch = computed(() => notes.count > 0 && list.value.length === 0)
+const filterName = computed(() => filters.value.find(f => f.key === filter.value)?.label || '')
 </script>
 
 <template>
@@ -149,6 +172,16 @@ const noMatch = computed(() => notes.count > 0 && notes.filtered.length === 0)
       <div class="np-search">
         <input v-model="notes.keyword" type="text" placeholder="搜索内容、画布或节点名…" />
         <span v-if="notes.keyword" class="np-search-clear" @click="notes.keyword = ''">✕</span>
+      </div>
+
+      <div class="np-filters">
+        <button
+          v-for="f in filters"
+          :key="f.key"
+          class="np-chip"
+          :class="{ on: filter === f.key }"
+          @click="filter = f.key"
+        >{{ f.label }} <i v-if="f.count">{{ f.count }}</i></button>
       </div>
 
       <div class="np-compose">
@@ -171,15 +204,19 @@ const noMatch = computed(() => notes.count > 0 && notes.filtered.length === 0)
         <div v-if="isEmpty" class="np-empty">
           <div class="np-empty-icon">🗒️</div>
           <p>还没有笔记。</p>
-          <p class="np-empty-sub">在 AI 回答里划选一段文字，点「📝 收藏」就能存到这里。</p>
+          <p class="np-empty-sub">在 AI 回答里划选一段文字、悬停消息点 📝、或右键节点「收藏节点」，都会存到这里。</p>
         </div>
-        <div v-else-if="noMatch" class="np-empty">
+        <div v-else-if="noMatch && notes.keyword" class="np-empty">
           <div class="np-empty-icon">🔍</div>
           <p>没有匹配「{{ notes.keyword }}」的笔记。</p>
         </div>
+        <div v-else-if="noMatch" class="np-empty">
+          <div class="np-empty-icon">🗂️</div>
+          <p>{{ filterName }}分类下还没有笔记。</p>
+        </div>
 
         <article
-          v-for="n in notes.filtered"
+          v-for="n in list"
           :key="n.id"
           class="np-item"
           :class="{ fresh: n.id === notes.lastAddedId, editing: n.id === editingId }"

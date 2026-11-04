@@ -8,6 +8,8 @@ const nowIso = () => new Date().toISOString()
 
 const clean = (s) => String(s || '').replace(/\r\n/g, '\n').trim().slice(0, MAX_LEN)
 
+const KINDS = ['excerpt', 'node', 'manual']   // 摘录 / 节点收藏 / 手动
+
 function load() {
   try {
     const raw = localStorage.getItem(NOTES_KEY)
@@ -19,7 +21,7 @@ function load() {
       .map(n => ({
         id: n.id,
         content: n.content,
-        kind: n.kind === 'excerpt' ? 'excerpt' : 'manual',
+        kind: KINDS.includes(n.kind) ? n.kind : 'manual',
         source: n.source && typeof n.source === 'object' ? n.source : null,
         createdAt: n.createdAt || nowIso(),
         updatedAt: n.updatedAt || n.createdAt || nowIso()
@@ -60,7 +62,8 @@ export const useNotesStore = defineStore('notes', {
       })
     },
     count: (s) => s.items.length,
-    excerptCount: (s) => s.items.filter(n => n.kind === 'excerpt').length
+    excerptCount: (s) => s.items.filter(n => n.kind === 'excerpt').length,
+    nodeCount: (s) => s.items.filter(n => n.kind === 'node').length
   },
 
   actions: {
@@ -72,22 +75,27 @@ export const useNotesStore = defineStore('notes', {
       }
     },
 
-    /** 新增一条。source 形如 { treeId, treeTitle, nodeId, nodeTitle, role } */
-    add(content, source = null) {
+    /**
+     * 新增一条。
+     * source 形如 { treeId, treeTitle, nodeId, nodeTitle, role }
+     * kind：'excerpt'（划词/整条消息摘录）| 'node'（收藏整个节点）| 'manual'（手写）
+     */
+    add(content, source = null, kind = null) {
       const text = clean(content)
       if (!text) return null
       const ts = nowIso()
+      const k = KINDS.includes(kind) ? kind : (source ? 'excerpt' : 'manual')
       const item = {
         id: makeId(),
         content: text,
-        kind: source ? 'excerpt' : 'manual',
+        kind: k,
         source: source
           ? {
               treeId: source.treeId || '',
               treeTitle: source.treeTitle || '未命名画布',
               nodeId: source.nodeId || '',
               nodeTitle: source.nodeTitle || '未命名节点',
-              role: source.role === 'user' ? 'user' : 'assistant'
+              role: source.role === 'user' ? 'user' : (source.role === 'node' ? 'node' : 'assistant')
             }
           : null,
         createdAt: ts,
@@ -97,6 +105,11 @@ export const useNotesStore = defineStore('notes', {
       this.lastAddedId = item.id
       this.persist()
       return item
+    },
+
+    /** 该节点是否已收藏过（用于节点收藏去重） */
+    hasNodeNote(nodeId) {
+      return this.items.some(n => n.kind === 'node' && n.source && n.source.nodeId === nodeId)
     },
 
     update(id, content) {

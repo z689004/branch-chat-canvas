@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { ElMessage } from 'element-plus'
 import {
   listTrees, createTree, getTree, createChildNode,
   updateNodeApi, deleteNodeApi, deleteTreeApi, clearTreeMessages, renameTreeApi,
@@ -333,8 +334,40 @@ export const useTreeStore = defineStore('tree', {
     async toggleStar(nodeId) {
       const n = this.nodeMap[nodeId]
       if (!n) return
-      await this.patchNode(nodeId, { starred: !n.starred })
-      return !n.starred
+      const want = !n.starred
+      await this.patchNode(nodeId, { starred: want })
+      // 收藏节点（点亮⭐）时，把节点对话内容存一份进笔记，集中可翻
+      if (want) await this._starToNote(n)
+      return want
+    },
+
+    /** 收藏节点 → 笔记。已收藏过该节点则不重复添加。 */
+    async _starToNote(n) {
+      try {
+        const { useNotesStore } = await import('./notes')
+        const notes = useNotesStore()
+        if (notes.hasNodeNote(n.nodeId)) {
+          ElMessage.info({ message: '该节点已在笔记中 ⭐', duration: 1600 })
+          return
+        }
+        const msgs = Array.isArray(n.messages) ? n.messages : []
+        const lines = []
+        for (const m of msgs) {
+          if (!m || !m.content || !String(m.content).trim()) continue
+          lines.push(m.role === 'user' ? `👤 我：${m.content}` : `🤖 AI：${m.content}`)
+        }
+        const body = lines.length
+          ? lines.join('\n\n')
+          : '（该节点还没有对话内容）'
+        const item = notes.add(
+          `⭐ ${n.title || '未命名节点'}\n\n${body}`,
+          { treeId: this.treeId, treeTitle: this.treeTitle, nodeId: n.nodeId, nodeTitle: n.title || '未命名节点', role: 'node' },
+          'node'
+        )
+        if (item) ElMessage.success({ message: '节点已收藏进笔记 ⭐', duration: 1600 })
+      } catch (e) {
+        console.warn('收藏节点写入笔记失败', e)
+      }
     },
 
     /** 清空会话：删除全部分支与对话，只留一个空白根会话（可撤销） */
