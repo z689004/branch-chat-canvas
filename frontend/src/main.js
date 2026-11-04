@@ -9,6 +9,13 @@ import '@vue-flow/controls/dist/style.css'
 import '@vue-flow/minimap/dist/style.css'
 import './styles.css'
 import App from './App.vue'
+import MiniChat from './components/MiniChat.vue'
+
+// 悬浮球小窗口：/ ?mini=1 时渲染迷你对话面板（窗口透明、无边框）
+const IS_MINI = new URLSearchParams(location.search).get('mini') === '1'
+if (IS_MINI) {
+  document.documentElement.setAttribute('data-mini', '1')
+}
 
 // 初始化主题（浅色 / 深色），Element Plus 通过 html.dark 启用深色变量
 function applyTheme() {
@@ -19,7 +26,7 @@ function applyTheme() {
 }
 applyTheme()
 
-const app = createApp(App)
+const app = createApp(IS_MINI ? MiniChat : App)
 app.use(createPinia())
 app.use(ElementPlus)
 app.mount('#app')

@@ -9,6 +9,7 @@
     BCC_PORT       指定端口（默认自动挑选空闲端口）
     BCC_DEBUG      "1" 时打开 DevTools
 """
+import json
 import logging
 import os
 import socket
@@ -16,6 +17,21 @@ import sys
 import threading
 import time
 from pathlib import Path
+
+# 悬浮球窗口尺寸（收起 / 展开）
+BALL_SIZE = 84
+PANEL_SIZE = (420, 620)
+
+
+def _screen_size() -> tuple:
+    """主屏尺寸（用于把悬浮球贴到右下角）。"""
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        return int(user32.GetSystemMetrics(0)), int(user32.GetSystemMetrics(1))
+    except Exception:  # noqa: BLE001
+        return 1920, 1080
 
 
 def app_root() -> Path:
@@ -71,9 +87,52 @@ class NativeApi:
 
     def __init__(self) -> None:
         self._win = None
+        self._ball = None
 
     def attach(self, win) -> None:
         self._win = win
+
+    def attach_ball(self, ball) -> None:
+        self._ball = ball
+
+    def toggle_mini(self, expanded: bool) -> bool:
+        """收起/展开悬浮窗：收起为圆球，展开为迷你对话面板（贴右下角）。"""
+        if not self._ball:
+            return False
+        w, h = PANEL_SIZE if expanded else (BALL_SIZE, BALL_SIZE)
+        sw, sh = _screen_size()
+        try:
+            self._ball.resize(int(w), int(h))
+            self._ball.move(int(sw - w - 24), int(sh - h - 72))
+        except Exception:  # noqa: BLE001
+            logging.getLogger("desktop").exception("调整悬浮窗尺寸失败")
+            return False
+        return True
+
+    def hide_ball(self) -> bool:
+        if self._ball:
+            self._ball.hide()
+            return True
+        return False
+
+    def show_ball(self) -> bool:
+        if self._ball:
+            self._ball.show()
+            return True
+        return False
+
+    def open_main(self, tree_id: str = "") -> bool:
+        """从悬浮窗跳到主窗口，并可选地切换到指定画布。"""
+        if not self._win:
+            return False
+        self._win.show()
+        if tree_id:
+            try:
+                self._win.evaluate_js(
+                    f"window.__openTreeFromMini && window.__openTreeFromMini({json.dumps(tree_id)})")
+            except Exception:  # noqa: BLE001
+                logging.getLogger("desktop").exception("主窗口切换画布失败")
+        return True
 
     def save_text(self, filename: str, content: str) -> str:
         """原生保存对话框：返回保存路径；用户取消返回空字符串。"""
@@ -147,6 +206,25 @@ def main() -> None:
         js_api=api,
     )
     api.attach(win)
+
+    # 桌面悬浮球：无边框、置顶、透明，贴屏幕右下角；点开变成迷你对话面板
+    sw, sh = _screen_size()
+    ball = webview.create_window(
+        "悬浮球",
+        f"{url}/?mini=1",
+        width=BALL_SIZE,
+        height=BALL_SIZE,
+        x=int(sw - BALL_SIZE - 24),
+        y=int(sh - BALL_SIZE - 72),
+        frameless=True,
+        on_top=True,
+        transparent=True,
+        resizable=False,
+        easy_drag=False,
+        shadow=False,
+        min_size=(BALL_SIZE, BALL_SIZE),
+    )
+    api.attach_ball(ball)
     # 兜底：允许 WebView2 自带下载 UI（万一有网页式下载场景）
     webview.settings["ALLOW_DOWNLOADS"] = True
     webview.start(

@@ -396,6 +396,65 @@ function walkMarkdown(tree, parentId, depth, lines, map) {
   }
 }
 
+function mdOutline(tree) {
+  const lines = []
+  const emit = (parent, depth) => {
+    for (const n of tree.nodeList.filter((x) => x.parentId === parent)) {
+      lines.push(`${'  '.repeat(depth)}- ${n.title}`)
+      emit(n.nodeId, depth + 1)
+    }
+  }
+  emit(null, 0)
+  return lines
+}
+
+/** 按节点真实坐标生成结构图 SVG */
+function canvasSvg(tree) {
+  if (!tree.nodeList.length) return ''
+  const box = {}
+  for (const n of tree.nodeList) {
+    const s = n.size || {}
+    box[n.nodeId] = [Number(n.x) || 0, Number(n.y) || 0, Number(s.w) || 340, Number(s.h) || 380]
+  }
+  const vals = Object.values(box)
+  const xs = vals.map((b) => b[0]).concat(vals.map((b) => b[0] + b[2]))
+  const ys = vals.map((b) => b[1]).concat(vals.map((b) => b[1] + b[3]))
+  const pad = 60
+  const minx = Math.min(...xs) - pad
+  const miny = Math.min(...ys) - pad
+  const bw = Math.max(Math.max(...xs) + pad - minx, 10)
+  const bh = Math.max(Math.max(...ys) + pad - miny, 10)
+
+  const parts = [
+    `<svg class="canvas-map" viewBox="${minx.toFixed(0)} ${miny.toFixed(0)} ${bw.toFixed(0)} ${bh.toFixed(0)}" preserveAspectRatio="xMidYMin meet" role="img" aria-label="画布结构图">`,
+    '<defs><marker id="arw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#b6bfcc"/></marker></defs>'
+  ]
+  for (const n of tree.nodeList) {
+    if (!n.parentId || !box[n.parentId]) continue
+    const [px, py, pw, ph] = box[n.parentId]
+    const [cx, cy, cw] = box[n.nodeId]
+    const x1 = px + pw / 2
+    const y1 = py + ph
+    const x2 = cx + cw / 2
+    const mid = (y1 + cy) / 2
+    parts.push(`<path d="M ${x1.toFixed(0)} ${y1.toFixed(0)} C ${x1.toFixed(0)} ${mid.toFixed(0)}, ${x2.toFixed(0)} ${mid.toFixed(0)}, ${x2.toFixed(0)} ${cy.toFixed(0)}" stroke="#b6bfcc" stroke-width="2.5" fill="none" marker-end="url(#arw)" opacity="0.85"/>`)
+  }
+  for (const n of tree.nodeList) {
+    const [x, y, w, h] = box[n.nodeId]
+    const isRoot = !n.parentId
+    const color = isRoot ? '#00b42a' : '#3370ff'
+    const title = String(n.title || '未命名')
+    const limit = Math.max(6, Math.floor((w - 34) / 15))
+    const label = title.length <= limit ? title : title.slice(0, limit - 1) + '…'
+    parts.push(`<g><rect x="${x.toFixed(0)}" y="${y.toFixed(0)}" width="${w.toFixed(0)}" height="${h.toFixed(0)}" rx="12" fill="#fff" stroke="#dde2ea" stroke-width="1.5"/>`)
+    parts.push(`<rect x="${x.toFixed(0)}" y="${y.toFixed(0)}" width="${w.toFixed(0)}" height="${Math.min(h, 8).toFixed(0)}" rx="4" fill="${color}" opacity="0.9"/>`)
+    parts.push(`<text x="${(x + 18).toFixed(0)}" y="${(y + 42).toFixed(0)}" font-size="16" font-weight="600" fill="#1f2329">${escHtml(label)}</text>`)
+    parts.push(`<text x="${(x + 18).toFixed(0)}" y="${(y + 70).toFixed(0)}" font-size="12" fill="#8a94a6">${isRoot ? '起始节点' : '分支节点'}</text></g>`)
+  }
+  parts.push('</svg>')
+  return parts.join('')
+}
+
 function buildHtml(tree, exportedAt) {
   const map = nodeMapOf(tree)
   const parts = []
@@ -453,6 +512,10 @@ function buildHtml(tree, exportedAt) {
   .bubble { white-space:pre-wrap; word-break:break-word; padding:10px 13px; border-radius:8px; background:#f5f6f8; }
   .ai .bubble { background:#f7fbff; border:1px solid #e8f0ff; }
   footer { text-align:center; margin-top:36px; }
+  .map-wrap { background:#fff; border:1px solid var(--line); border-radius:12px; padding:18px 18px 10px; margin:0 0 26px; }
+  .map-title { font-size:13px; color:var(--dim); margin:0 0 10px; }
+  svg.canvas-map { width:100%; height:auto; max-height:640px; display:block; }
+  .sec-title { font-size:13px; color:var(--dim); letter-spacing:.5px; margin:28px 0 14px; }
   @media print { body { background:#fff; padding:0; } .node { break-inside:avoid; box-shadow:none; } }
 </style>
 </head>
@@ -462,6 +525,11 @@ function buildHtml(tree, exportedAt) {
   <h1>${escHtml(tree.title)}</h1>
   <div class="meta">分支对话树 ｜ 共 ${tree.nodeList.length} 个节点 ｜ 导出时间 ${escHtml(exportedAt)}</div>
 </header>
+<section class="map-wrap">
+  <p class="map-title">画布结构 · ${tree.nodeList.length} 个节点</p>
+  ${canvasSvg(tree)}
+</section>
+<div class="sec-title">对话内容</div>
 ${parts.join('\n')}
 <footer>由「分支对话画布」导出 · ${escHtml(exportedAt)}</footer>
 </div>
@@ -493,6 +561,10 @@ export async function exportTree(treeId, format) {
     `# ${tree.title}`,
     '',
     `> 分支对话树 ｜ 共 ${tree.nodeList.length} 个节点 ｜ 导出时间 ${stamp}`,
+    '',
+    '## 结构概览',
+    '',
+    ...mdOutline(tree),
     '',
     '---',
     ''

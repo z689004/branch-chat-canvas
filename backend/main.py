@@ -460,6 +460,87 @@ def _walk(tree: dict, parent_id, depth: int, lines: list, node_map: dict) -> Non
         _walk(tree, n["nodeId"], depth + 1, lines, node_map)
 
 
+def _canvas_svg(tree: dict, node_map: dict) -> str:
+    """按节点真实坐标生成结构图（还原画布上的空间布局）。"""
+    nodes = tree["nodeList"]
+    if not nodes:
+        return ""
+
+    def size(n):
+        s = n.get("size") or {}
+        try:
+            return float(s.get("w") or 340), float(s.get("h") or 380)
+        except (TypeError, ValueError):
+            return 340.0, 380.0
+
+    boxes = {}
+    for n in nodes:
+        w, h = size(n)
+        boxes[n["nodeId"]] = (float(n.get("x") or 0), float(n.get("y") or 0), w, h)
+
+    xs = [b[0] for b in boxes.values()] + [b[0] + b[2] for b in boxes.values()]
+    ys = [b[1] for b in boxes.values()] + [b[1] + b[3] for b in boxes.values()]
+    pad = 60.0
+    minx, maxx = min(xs) - pad, max(xs) + pad
+    miny, maxy = min(ys) - pad, max(ys) + pad
+    bw, bh = max(maxx - minx, 10), max(maxy - miny, 10)
+
+    parts = [
+        f'<svg class="canvas-map" viewBox="{minx:.0f} {miny:.0f} {bw:.0f} {bh:.0f}" '
+        f'preserveAspectRatio="xMidYMin meet" role="img" aria-label="画布结构图">',
+        '<defs><marker id="arw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" '
+        'markerHeight="6" orient="auto-start-reverse">'
+        '<path d="M 0 0 L 10 5 L 0 10 z" fill="#b6bfcc"/></marker></defs>',
+    ]
+    # 连线：父节点底部中点 → 子节点顶部中点（贝塞尔，贴合金字塔树形）
+    for n in nodes:
+        pid = n.get("parentId")
+        if not pid or pid not in boxes:
+            continue
+        px, py, pw, ph = boxes[pid]
+        cx, cy, cw, ch = boxes[n["nodeId"]]
+        x1, y1 = px + pw / 2, py + ph
+        x2, y2 = cx + cw / 2, cy
+        mid = (y1 + y2) / 2
+        parts.append(
+            f'<path d="M {x1:.0f} {y1:.0f} C {x1:.0f} {mid:.0f}, {x2:.0f} {mid:.0f}, {x2:.0f} {y2:.0f}" '
+            f'stroke="#b6bfcc" stroke-width="2.5" fill="none" marker-end="url(#arw)" opacity="0.85"/>'
+        )
+    # 节点卡片
+    for n in nodes:
+        x, y, w, h = boxes[n["nodeId"]]
+        is_root = not n.get("parentId")
+        color = "#00b42a" if is_root else "#3370ff"
+        title = str(n.get("title") or "未命名")
+        limit = max(6, int((w - 34) / 15))
+        label = title if len(title) <= limit else title[: limit - 1] + "…"
+        parts.append(
+            f'<g><rect x="{x:.0f}" y="{y:.0f}" width="{w:.0f}" height="{h:.0f}" rx="12" '
+            f'fill="#ffffff" stroke="#dde2ea" stroke-width="1.5"/>'
+            f'<rect x="{x:.0f}" y="{y:.0f}" width="{w:.0f}" height="{min(h, 8):.0f}" rx="4" fill="{color}" opacity="0.9"/>'
+            f'<text x="{x + 18:.0f}" y="{y + 42:.0f}" font-size="16" font-weight="600" fill="#1f2329">{escape(label)}</text>'
+            f'<text x="{x + 18:.0f}" y="{y + 70:.0f}" font-size="12" fill="#8a94a6">'
+            f'{"起始节点" if is_root else "分支节点"}</text></g>'
+        )
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+def _md_outline(tree: dict) -> list:
+    """Markdown 里的结构概览（用缩进列表呈现层级）。"""
+    lines = []
+
+    def emit(parent, depth):
+        for n in tree["nodeList"]:
+            if n["parentId"] != parent:
+                continue
+            lines.append(f"{'  ' * depth}- {n['title']}")
+            emit(n["nodeId"], depth + 1)
+
+    emit(None, 0)
+    return lines
+
+
 _HTML_TPL = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -489,6 +570,10 @@ _HTML_TPL = """<!DOCTYPE html>
   .bubble {{ white-space:pre-wrap; word-break:break-word; padding:10px 13px; border-radius:8px; background:#f5f6f8; }}
   .ai .bubble {{ background:#f7fbff; border:1px solid #e8f0ff; }}
   footer {{ text-align:center; color:var(--dim); font-size:12px; margin-top:36px; }}
+  .map-wrap {{ background:#fff; border:1px solid var(--line); border-radius:12px; padding:18px 18px 10px; margin:0 0 26px; }}
+  .map-title {{ font-size:13px; color:var(--dim); margin:0 0 10px; }}
+  svg.canvas-map {{ width:100%; height:auto; max-height:640px; display:block; }}
+  .sec-title {{ font-size:13px; color:var(--dim); letter-spacing:.5px; margin:28px 0 14px; }}
   @media print {{
     body {{ background:#fff; padding:0; }}
     .node {{ break-inside:avoid; box-shadow:none; }}
@@ -502,6 +587,8 @@ _HTML_TPL = """<!DOCTYPE html>
   <h1>{title}</h1>
   <div class="meta">{meta}</div>
 </header>
+{map}
+<div class="sec-title">对话内容</div>
 {body}
 <footer>由「分支对话画布」导出 · {exported_at}</footer>
 </div>
@@ -580,9 +667,13 @@ def tree_export(treeId: str, format: str = "markdown"):
                 emit_html(n["nodeId"])
 
         emit_html(None)
+        svg = _canvas_svg(tree, node_map)
+        map_html = (f'<section class="map-wrap"><p class="map-title">画布结构 · {len(tree["nodeList"])} 个节点</p>'
+                    f"{svg}</section>") if svg else ""
         html_doc = _HTML_TPL.format(
             title=escape(tree["title"]),
             meta=escape(f"分支对话树 ｜ 共 {len(tree['nodeList'])} 个节点 ｜ 导出时间 {stamp}"),
+            map=map_html,
             body="\n".join(parts),
             exported_at=escape(stamp),
         )
@@ -592,11 +683,15 @@ def tree_export(treeId: str, format: str = "markdown"):
             headers={"Content-Disposition": "attachment; filename=tree.html"},
         )
 
-    # 默认 Markdown：带元信息、分支路径、AI 回答引用块
+    # 默认 Markdown：元信息 + 结构概览 + 分支路径 + AI 回答引用块
     lines = [
         f"# {tree['title']}",
         "",
         f"> 分支对话树 ｜ 共 {len(tree['nodeList'])} 个节点 ｜ 导出时间 {now()}",
+        "",
+        "## 结构概览",
+        "",
+        *_md_outline(tree),
         "",
         "---",
         "",

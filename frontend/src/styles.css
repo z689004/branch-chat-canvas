@@ -527,3 +527,14 @@ html[data-theme="dark"] .el-dropdown-menu__item { color: var(--text-sub); }
 html[data-theme="dark"] .el-dropdown-menu__item:not(.is-disabled):hover {
   background: var(--bg-subtle); color: var(--primary);
 }
+
+/* ---------- 悬浮球小窗口（?mini=1）：透明背景，只显示球/面板 ---------- */
+html[data-mini="1"],
+html[data-mini="1"] body,
+html[data-mini="1"] #app {
+  background: transparent !important;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+}
+html[data-mini="1"] body { user-select: none; }

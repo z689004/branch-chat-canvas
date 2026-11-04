@@ -175,6 +175,25 @@ async function doExport(format) {
   }
 }
 
+// ---------- 桌面悬浮球 ----------
+const ballVisible = ref(true)
+function toggleBall() {
+  const api = window.pywebview && window.pywebview.api
+  if (!api || !api.hide_ball) {
+    ElMessage.info('悬浮球为桌面版专属功能，网页版不可用')
+    return
+  }
+  if (ballVisible.value) {
+    api.hide_ball()
+    ballVisible.value = false
+    ElMessage.info('已隐藏悬浮球')
+  } else {
+    api.show_ball()
+    ballVisible.value = true
+    ElMessage.success('悬浮球已显示在屏幕右下角')
+  }
+}
+
 // ---------- 导入备份 ----------
 const importInput = ref(null)
 function pickImportFile() {
@@ -615,6 +634,13 @@ onMounted(() => {
   document.addEventListener('keyup', onKeyup)
   document.addEventListener('mousedown', onDocMouseDown)
   refreshLlm()
+  // 悬浮球面板点击「在主窗口打开」时，由桌面壳调用此方法切换画布
+  window.__openTreeFromMini = async (treeId) => {
+    try {
+      await store.loadTree(treeId)
+      nextTick(() => fitAll(0.25, 400))
+    } catch (e) { /* ignore */ }
+  }
   store.init().then(() => nextTick(() => fitAll(0.3, 300)))
 })
 function onDocMouseDown(e) {
@@ -625,6 +651,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('keydown', onKeydown)
   document.removeEventListener('keyup', onKeyup)
   document.removeEventListener('mousedown', onDocMouseDown)
+  delete window.__openTreeFromMini
   cancelBranchHide()
 })
 </script>
@@ -718,6 +745,9 @@ onBeforeUnmount(() => {
           </template>
         </el-dropdown>
         <input ref="importInput" type="file" accept=".json,application/json" style="display: none" @change="onImportFile" />
+        <el-tooltip content="显示/隐藏桌面悬浮球（屏幕右下角，点开可随时对话）" placement="bottom">
+          <el-button size="small" :type="ballVisible ? 'primary' : 'default'" :plain="ballVisible" @click="toggleBall">🎈</el-button>
+        </el-tooltip>
         <el-tooltip content="删除当前画布的全部节点与对话（需二次确认）" placement="bottom">
           <el-button size="small" type="danger" plain @click="clearCanvas">🗑️ 清空</el-button>
         </el-tooltip>
