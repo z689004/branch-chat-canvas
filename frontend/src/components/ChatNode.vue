@@ -4,10 +4,12 @@ import { useVueFlow, Handle, Position } from '@vue-flow/core'
 import { ElMessage } from 'element-plus'
 import MarkdownIt from 'markdown-it'
 import { useTreeStore } from '../store/tree'
+import { useNotesStore } from '../store/notes'
 
 const props = defineProps({ nodeId: { type: String, required: true } })
 const emit = defineEmits(['menu', 'child-created'])
 const store = useTreeStore()
+const notesStore = useNotesStore()
 const { viewport } = useVueFlow()
 
 const node = computed(() => store.nodeMap[props.nodeId])
@@ -69,6 +71,25 @@ function retry() {
 }
 function toggleStar() {
   store.toggleStar(props.nodeId)
+}
+
+/** 整条消息收藏进笔记（划词收藏的补充：不想挑句子时直接存整条） */
+function collectMessage(m) {
+  const n = node.value
+  if (!n || !m?.content?.trim()) return
+  const item = notesStore.add(m.content, {
+    treeId: store.treeId,
+    treeTitle: store.treeTitle,
+    nodeId: n.nodeId,
+    nodeTitle: n.title,
+    role: m.role
+  })
+  if (item) {
+    ElMessage.success({
+      message: m.role === 'user' ? '已把我的提问收藏到笔记 📝' : '已把这条回答收藏到笔记 📝',
+      duration: 1600
+    })
+  }
 }
 
 /** 右键菜单：交给外层统一渲染（新增子分支 / 复制 / 折叠 / 导出 / 删除） */
@@ -280,6 +301,11 @@ watch(
             <el-button size="small" text type="primary" @click="retry">🔄 重试</el-button>
           </div>
         </div>
+        <span
+          class="msg-note-btn nodrag"
+          :title="m.role === 'user' ? '把我的这条提问收藏到笔记' : '把这条回答收藏到笔记'"
+          @click.stop="collectMessage(m)"
+        >📝</span>
       </div>
     </div>
 

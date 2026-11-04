@@ -10,8 +10,11 @@ import {
   saveLlmProfile, deleteLlmProfile, activateLlmProfile
 } from './api'
 import ChatNode from './components/ChatNode.vue'
+import NotePanel from './components/NotePanel.vue'
+import { useNotesStore } from './store/notes'
 
 const store = useTreeStore()
+const notes = useNotesStore()
 const { fitView, viewport, zoomIn, zoomOut, getSelectedNodes } = useVueFlow()
 
 /** 适应视图：缩放到刚好装下全部节点，但最多放大到 100%，避免小画布被拉得过大 */
@@ -64,7 +67,7 @@ function onDragStop({ node }) {
 }
 
 // ---------- 文本划选 → 悬浮分支面板 ----------
-const branch = reactive({ visible: false, x: 0, y: 0, text: '', nodeId: '' })
+const branch = reactive({ visible: false, x: 0, y: 0, text: '', nodeId: '', role: 'assistant' })
 let branchHideTimer = null
 
 function scheduleBranchHide() {
@@ -97,6 +100,9 @@ function onMouseUp(e) {
     const rect = range.getBoundingClientRect()
     branch.text = text
     branch.nodeId = host.dataset.nodeId
+    // 记录这句话是谁说的：用于笔记的来源标注
+    const msgEl = el.closest('.msg')
+    branch.role = msgEl && msgEl.classList.contains('user') ? 'user' : 'assistant'
     branch.x = Math.min(rect.left + rect.width / 2, window.innerWidth - 260)
     // 面板显示在选区上方（高度约 76px）
     branch.y = Math.max(rect.top - 86, 60)
@@ -123,9 +129,24 @@ async function quickCreate(mode) {
   }
 }
 
+/** 把划选的文字收藏进笔记，自动带上来源（哪棵树 / 哪个节点 / 谁说的） */
+function quickCollect() {
+  if (!branch.text) return
+  const node = store.nodeMap[branch.nodeId]
+  const item = notes.add(branch.text, {
+    treeId: store.treeId,
+    treeTitle: store.treeTitle,
+    nodeId: branch.nodeId,
+    nodeTitle: node?.title || '未命名节点',
+    role: branch.role
+  })
+  branch.visible = false
+  window.getSelection()?.removeAllRanges()
+  if (item) ElMessage.success({ message: '已收藏到笔记 📝', duration: 1600 })
+}
+
 // ---------- 画布操作 ----------
-async function newTree() {
-  try { await store.newTree(); ElMessage.success('新画布已创建'); nextTick(() => fitAll(0.3, 300)) }
+async function newTree() {  try { await store.newTree(); ElMessage.success('新画布已创建'); nextTick(() => fitAll(0.3, 300)) }
   catch (e) { ElMessage.error(e.message) }
 }
 async function switchTree(treeId) {
@@ -726,12 +747,19 @@ const isTyping = (e) => {
 }
 function onKeydown(e) {
   if (e.key === 'Escape') {
+    // 笔记面板打开时，Esc 优先收起面板
+    if (notes.panelOpen) { notes.close(); return }
     window.getSelection()?.removeAllRanges()
     branch.visible = false
     closeNodeMenu()
     return
   }
   const mod = e.ctrlKey || e.metaKey
+  if (mod && e.key.toLowerCase() === 'j') {
+    e.preventDefault()
+    notes.toggle()
+    return
+  }
   if (mod && e.key.toLowerCase() === 'z') {
     e.preventDefault()
     e.shiftKey ? doRedo() : doUndo()
@@ -913,6 +941,7 @@ onBeforeUnmount(() => {
           <div class="kbd-row"><span>多选节点</span><b>Ctrl + 点击</b></div>
           <div class="kbd-row"><span>节点菜单</span><b>右键卡片</b></div>
           <div class="kbd-row"><span>划词生分支</span><b>选中回答文字</b></div>
+          <div class="kbd-row"><span>笔记面板</span><b>Ctrl + J</b></div>
           <div class="kbd-row"><span>重命名节点</span><b>双击标题</b></div>
           <div class="kbd-row"><span>取消划选面板</span><b>Esc</b></div>
         </div>
@@ -1007,6 +1036,19 @@ onBeforeUnmount(() => {
       </transition>
     </div>
 
+    <!-- 笔记入口：常驻右侧，展开后移到面板左侧，随时可收起 -->
+    <button
+      class="note-fab"
+      :class="{ open: notes.panelOpen }"
+      :title="notes.panelOpen ? '收起笔记（Ctrl + J）' : '我的笔记（Ctrl + J）'"
+      @click="notes.toggle()"
+    >
+      <span class="note-fab-icon">📝</span>
+      <span v-if="notes.count" class="note-fab-count">{{ notes.count > 99 ? '99+' : notes.count }}</span>
+    </button>
+
+    <NotePanel />
+
     <!-- 划选后弹出的分支面板：直接选模式一键创建 -->
     <div
       v-if="branch.visible"
@@ -1017,6 +1059,7 @@ onBeforeUnmount(() => {
       <div class="branch-pop-actions">
         <button class="pop-btn simple" title="仅用选中片段作为上下文" @click="quickCreate('simple')">⚡ 精简</button>
         <button class="pop-btn full" title="继承父节点全部对话历史" @click="quickCreate('full')">📚 完整</button>
+        <button class="pop-btn note" title="收藏进笔记，不产生新分支" @click="quickCollect">📝 收藏</button>
       </div>
     </div>
 

@@ -556,3 +556,124 @@ html[data-mini="1"] #app {
   padding: 0;
 }
 html[data-mini="1"] body { user-select: none; }
+
+/* ---------- 笔记 / 收藏夹：右侧面板 + 入口按钮 ---------- */
+.pop-btn.note { background: var(--text-sub); }
+.branch-pop { width: 268px; }
+
+.note-fab {
+  position: fixed; right: 16px; top: 50%; transform: translateY(-50%);
+  width: 44px; height: 44px; border-radius: 50%; z-index: 900;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border); background: var(--bg-panel);
+  box-shadow: var(--shadow-node); cursor: pointer; font-size: 18px;
+  transition: right 0.26s ease, box-shadow 0.15s, transform 0.15s;
+}
+.note-fab:hover { box-shadow: var(--shadow-pop); transform: translateY(-50%) scale(1.06); }
+.note-fab.open { right: 396px; }
+.note-fab-count {
+  position: absolute; top: -5px; right: -5px; min-width: 18px; height: 18px;
+  padding: 0 4px; border-radius: 9px; background: var(--danger); color: #fff;
+  font-size: 11px; line-height: 18px; font-weight: 600; text-align: center;
+}
+
+.note-panel {
+  position: fixed; top: 0; right: 0; bottom: 0; width: 380px; z-index: 1000;
+  display: flex; flex-direction: column;
+  background: var(--bg-panel); border-left: 1px solid var(--border);
+  box-shadow: -8px 0 28px rgba(31, 35, 41, 0.12);
+}
+.note-slide-enter-active, .note-slide-leave-active { transition: transform 0.26s ease, opacity 0.26s ease; }
+.note-slide-enter-from, .note-slide-leave-to { transform: translateX(100%); opacity: 0; }
+
+.np-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 14px; border-bottom: 1px solid var(--border-soft);
+}
+.np-title { font-size: 14px; font-weight: 600; color: var(--text); }
+.np-count {
+  font-size: 11px; color: var(--text-dim); background: var(--bg-subtle);
+  border-radius: 8px; padding: 1px 7px;
+}
+.np-close {
+  cursor: pointer; color: var(--text-dim); font-size: 14px;
+  padding: 2px 7px; border-radius: 6px; line-height: 1;
+}
+.np-close:hover { background: var(--bg-subtle); color: var(--text); }
+
+.np-search { position: relative; padding: 10px 14px 0; }
+.np-search input {
+  width: 100%; border: 1px solid var(--border); border-radius: 8px;
+  padding: 7px 26px 7px 10px; font-size: 12.5px; outline: none;
+  background: var(--bg-sub); color: var(--text); font-family: inherit;
+}
+.np-search input:focus { border-color: var(--primary); background: var(--bg-panel); }
+.np-search-clear {
+  position: absolute; right: 23px; top: 50%; transform: translateY(-32%);
+  cursor: pointer; color: var(--text-dim); font-size: 11px;
+}
+
+.np-compose { padding: 10px 14px 12px; border-bottom: 1px solid var(--border-soft); }
+.np-compose textarea, .np-edit {
+  width: 100%; border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 10px; font-size: 12.5px; line-height: 1.65; outline: none;
+  background: var(--bg-sub); color: var(--text); resize: vertical; font-family: inherit;
+}
+.np-compose textarea:focus, .np-edit:focus { border-color: var(--primary); background: var(--bg-panel); }
+.np-compose-bar { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; }
+.np-hint { font-size: 11px; color: var(--text-faint); }
+.np-btn {
+  border: 1px solid var(--border); background: var(--bg-panel); color: var(--text-sub);
+  border-radius: 7px; padding: 5px 13px; font-size: 12px; cursor: pointer;
+}
+.np-btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; font-weight: 600; }
+.np-btn.primary:disabled { opacity: 0.45; cursor: not-allowed; }
+.np-btn.primary:not(:disabled):hover { filter: brightness(1.08); }
+
+.np-list {
+  flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  padding: 10px 14px 14px; display: flex; flex-direction: column; gap: 10px;
+}
+.np-item { border: 1px solid var(--border); border-radius: 10px; padding: 10px 11px; background: var(--bg-panel); }
+.np-item.fresh { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(22, 93, 255, 0.08); }
+.np-item-body {
+  font-size: 13px; line-height: 1.65; color: var(--text); white-space: pre-wrap; word-break: break-word;
+  display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden;
+}
+.np-item-body.expanded { display: block; -webkit-line-clamp: unset; }
+.np-more { display: inline-block; margin-top: 4px; font-size: 11.5px; color: var(--primary); cursor: pointer; }
+.np-item-meta { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 11px; color: var(--text-dim); }
+.np-src { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.np-src.excerpt { color: var(--primary); }
+.np-time { flex: none; color: var(--text-faint); }
+.np-item-actions { display: flex; gap: 6px; margin-top: 8px; }
+.np-mini {
+  border: none; background: var(--bg-subtle); color: var(--text-sub);
+  border-radius: 6px; padding: 4px 9px; font-size: 11.5px; cursor: pointer;
+}
+.np-mini:hover { background: var(--bg-sub); color: var(--text); }
+.np-mini.primary { background: var(--primary); color: #fff; }
+.np-mini.danger:hover { background: #ffece8; color: var(--danger); }
+html[data-theme="dark"] .np-mini.danger:hover { background: rgba(247, 101, 96, 0.16); }
+
+.np-empty { text-align: center; color: var(--text-faint); font-size: 12.5px; padding: 36px 10px; line-height: 1.7; }
+.np-empty-icon { font-size: 26px; margin-bottom: 6px; }
+.np-empty-sub { margin-top: 4px; font-size: 11.5px; color: var(--text-faint); }
+
+.np-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 9px 14px; border-top: 1px solid var(--border-soft);
+  font-size: 11px; color: var(--text-faint);
+}
+.np-clear { cursor: pointer; color: var(--danger); }
+.np-clear:hover { text-decoration: underline; }
+
+/* 卡片内每条消息的收藏按钮：悬停出现 */
+.msg-note-btn {
+  align-self: flex-start; margin: 0 6px; padding: 2px 3px; border-radius: 5px;
+  font-size: 12px; line-height: 1; cursor: pointer; user-select: none;
+  opacity: 0; transition: opacity 0.15s, background 0.15s;
+}
+.msg:hover .msg-note-btn { opacity: 0.55; }
+.msg-note-btn:hover { opacity: 1; background: var(--bg-subtle); }
+.msg.user .msg-note-btn { order: -1; }
