@@ -28,7 +28,7 @@ from pathlib import Path
 # ---------- 常量 ----------
 MAIN_TITLE = "分支对话画布"
 BALL_TITLE = "悬浮球"
-BALL_SIZE = 60
+BALL_SIZE = 48
 PANEL_SIZE = (420, 620)
 MENU_SIZE = (212, 306)      # 右键菜单展开时的窗口尺寸（球固定在右下角）
 SNAP_THRESHOLD = 32         # 距工作区边缘多少像素内自动吸附

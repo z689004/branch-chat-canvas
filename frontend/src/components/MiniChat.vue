@@ -14,7 +14,7 @@
       @pointerdown.left.prevent.stop="onBallDown"
       @contextmenu.prevent.stop="openMenu"
     >
-      <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
         <path d="M4 4h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H9l-5 4V6a2 2 0 0 1 2-2z"
               fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" />
         <circle cx="8.5" cy="10.5" r="1.1" fill="currentColor" />
@@ -334,7 +334,7 @@ onMounted(async () => {
   height: 100%;
   padding: 0;
   border: none;
-  border-radius: 14px; /* 圆角方形（squircle），与窗口系统圆角自然衔接 */
+  border-radius: 12px; /* 圆角方形（squircle），与窗口系统圆角自然衔接 */
   cursor: grab;
   color: #fff;
   display: flex;
@@ -352,7 +352,7 @@ onMounted(async () => {
 .mini-ball:hover { filter: brightness(1.09); }
 .mini-ball:active { filter: brightness(.94); cursor: grabbing; }
 .mini-root.dragging .mini-ball { filter: brightness(.96); cursor: grabbing; }
-.mini-ball svg { width: 25px; height: 25px; }
+.mini-ball svg { width: 20px; height: 20px; }
 
 /* ---------- 右键菜单：窗口即菜单，圆角浮层 ---------- */
 .mini-root.menu-open {
