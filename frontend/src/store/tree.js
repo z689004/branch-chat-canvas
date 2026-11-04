@@ -336,17 +336,31 @@ export const useTreeStore = defineStore('tree', {
       if (!n) return
       const want = !n.starred
       await this.patchNode(nodeId, { starred: want })
-      // 收藏节点（点亮⭐）时，把节点对话内容存一份进笔记，集中可翻
-      if (want) await this._starToNote(n)
+      // 星标与笔记双向同步：点亮⭐存对话快照，取消⭐移除对应笔记
+      await this._syncStarNote(n, want)
       return want
     },
 
-    /** 收藏节点 → 笔记。已收藏过该节点则不重复添加。 */
-    async _starToNote(n) {
+    /** 收藏节点 ↔ 笔记 双向同步。 */
+    async _syncStarNote(n, want) {
       try {
         const { useNotesStore } = await import('./notes')
         const notes = useNotesStore()
-        if (notes.hasNodeNote(n.nodeId)) {
+        const existing = notes.items.find(x => x.kind === 'node' && x.source && x.source.nodeId === n.nodeId)
+
+        if (!want) {
+          // 取消星标：移除该节点的笔记；但用户手动编辑过的保留（内容已是自己的）
+          if (!existing) return
+          if (existing.updatedAt !== existing.createdAt) {
+            ElMessage.info({ message: '该节点的笔记已手动编辑过，保留在笔记中', duration: 2400 })
+          } else {
+            notes.remove(existing.id)
+            ElMessage.success({ message: '已取消收藏，对应笔记已移除', duration: 1600 })
+          }
+          return
+        }
+
+        if (existing) {
           ElMessage.info({ message: '该节点已在笔记中 ⭐', duration: 1600 })
           return
         }
@@ -366,7 +380,7 @@ export const useTreeStore = defineStore('tree', {
         )
         if (item) ElMessage.success({ message: '节点已收藏进笔记 ⭐', duration: 1600 })
       } catch (e) {
-        console.warn('收藏节点写入笔记失败', e)
+        console.warn('收藏节点与笔记同步失败', e)
       }
     },
 
