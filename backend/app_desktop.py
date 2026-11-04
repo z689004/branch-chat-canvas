@@ -28,7 +28,7 @@ from pathlib import Path
 # ---------- 常量 ----------
 MAIN_TITLE = "分支对话画布"
 BALL_TITLE = "悬浮球"
-BALL_SIZE = 84
+BALL_SIZE = 60
 PANEL_SIZE = (420, 620)
 MENU_SIZE = (212, 306)      # 右键菜单展开时的窗口尺寸（球固定在右下角）
 SNAP_THRESHOLD = 32         # 距工作区边缘多少像素内自动吸附
@@ -270,6 +270,7 @@ class NativeApi:
     def __init__(self) -> None:
         self._win = None
         self._ball = None
+        self._menu_watch = False
 
     def attach(self, win) -> None:
         self._win = win
@@ -383,10 +384,15 @@ class NativeApi:
             log.exception("展开悬浮球菜单失败")
             return {"ok": False}
         log.info("右键菜单展开 → %dx%d @ (%d, %d)", w, h, x, y)
+        # 窗口即菜单，页面里没有"外部区域"可点，改由全局鼠标轮询实现点外部关闭
+        if not self._menu_watch:
+            self._menu_watch = True
+            threading.Thread(target=self._watch_menu_outside_click, daemon=True).start()
         return {"ok": True, "x": int(x), "y": int(y)}
 
     def collapse_menu(self) -> dict:
         """从菜单/面板恢复到圆球。"""
+        self._menu_watch = False
         if not self._ball:
             return {"ok": False}
         try:
@@ -399,10 +405,52 @@ class NativeApi:
             return {"ok": False}
         return {"ok": True}
 
+    # ---------------- 菜单"点击外部关闭" ----------------
+
+    def _watch_menu_outside_click(self) -> None:
+        """菜单展开期间轮询全局鼠标：在窗口外按下左键 → 自动收起菜单。
+
+        悬浮球窗口本身就是菜单（尺寸 = 菜单尺寸），页面里不存在"外部区域"，
+        只能靠 GetAsyncKeyState 监听窗口外的点击。
+        """
+        u = _user32()
+        VK_LBUTTON = 0x01
+        time.sleep(0.35)  # 避开打开菜单的那次点击
+        while self._menu_watch:
+            try:
+                if u.GetAsyncKeyState(VK_LBUTTON) & 0x8000:
+                    hwnd = find_window(BALL_TITLE)
+                    if not hwnd:
+                        return
+                    pt = wintypes.POINT()
+                    u.GetCursorPos(ctypes.byref(pt))
+                    r = window_rect(hwnd)  # 物理像素，与 GetCursorPos 同一坐标系
+                    inside = r.left <= pt.x < r.right and r.top <= pt.y < r.bottom
+                    if not inside:
+                        log.info("在菜单外点击，自动收起悬浮球菜单")
+                        self._menu_watch = False
+                        self.collapse_menu()
+                        self._notify_menu_closed()
+                        return
+            except Exception:  # noqa: BLE001
+                log.exception("菜单外部点击监听异常")
+                return
+            time.sleep(0.05)
+
+    def _notify_menu_closed(self) -> None:
+        """让前端把菜单视图收起来，否则球仍是隐藏状态、窗口只剩一块底色。"""
+        if not self._ball:
+            return
+        try:
+            self._ball.evaluate_js("window.__closeBallMenu && window.__closeBallMenu()")
+        except Exception:  # noqa: BLE001
+            log.exception("通知前端收起菜单失败")
+
     def toggle_mini(self, expanded: bool) -> bool:
         """快速对话：把悬浮球展开成迷你对话面板，收起时回到球。"""
         if not self._ball:
             return False
+        self._menu_watch = False  # 面板状态下不再监听"菜单外点击"
         work = work_area_ui(0)
         try:
             log.info("迷你面板 %s", "展开" if expanded else "收起")

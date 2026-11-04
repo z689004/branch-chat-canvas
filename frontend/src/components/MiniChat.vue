@@ -10,7 +10,7 @@
     <button
       v-if="!expanded"
       class="mini-ball"
-      title="左键唤起 / 收起主窗口，拖动可移动，右键更多操作"
+      title="左键打开快速对话，按住可拖动，右键更多操作"
       @pointerdown.left.prevent.stop="onBallDown"
       @contextmenu.prevent.stop="openMenu"
     >
@@ -31,7 +31,7 @@
         <button class="bm-item" @click="menuHideBall"><span>👁️</span>隐藏悬浮球</button>
         <div class="bm-sep"></div>
         <button class="bm-item danger" @click="menuQuit"><span>⏻</span>退出程序</button>
-        <div class="bm-tip">左键点击唤起 / 收起主窗口<br />按住可拖动，靠近边缘自动吸附</div>
+        <div class="bm-tip">左键直接快速对话，按住可拖动<br />点击空白处或按 Esc 关闭菜单</div>
       </div>
     </transition>
 
@@ -164,8 +164,8 @@ async function onDragUp() {
   const a = api()
   if (!st || !a) return
   if (!st.moved) {
-    // 点击：唤起 / 收起主窗口
-    if (a.toggle_main) await a.toggle_main()
+    // 点击：直接进入快速会话（打开主界面在右键菜单里）
+    quickChat()
   } else if (a.end_drag) {
     // 拖完：贴边吸附 + 记住位置
     await a.end_drag()
@@ -293,7 +293,22 @@ async function send() {
   }
 }
 
+/** 窗口被后端收回成球尺寸（如菜单被外部点击关闭）时，同步收起菜单视图 */
+function onWinResize() {
+  if (menuOpen.value && window.innerWidth <= 120 && window.innerHeight <= 120) {
+    menuOpen.value = false
+  }
+}
+
+function onKeyDown(e) {
+  if (e.key === 'Escape' && menuOpen.value) closeMenu()
+}
+
 onMounted(async () => {
+  // 供后端在"点菜单外部"时回调，收起菜单视图
+  window.__closeBallMenu = () => { menuOpen.value = false }
+  window.addEventListener('keydown', onKeyDown)
+  window.addEventListener('resize', onWinResize)
   // 悬浮球窗口默认收起；主窗口里不该出现此组件
   try { await ensureTree() } catch (e) { /* 后端未就绪时静默 */ }
 })
@@ -319,7 +334,7 @@ onMounted(async () => {
   height: 100%;
   padding: 0;
   border: none;
-  border-radius: 20px; /* 圆角方形（squircle），与窗口系统圆角自然衔接 */
+  border-radius: 14px; /* 圆角方形（squircle），与窗口系统圆角自然衔接 */
   cursor: grab;
   color: #fff;
   display: flex;
@@ -337,7 +352,7 @@ onMounted(async () => {
 .mini-ball:hover { filter: brightness(1.09); }
 .mini-ball:active { filter: brightness(.94); cursor: grabbing; }
 .mini-root.dragging .mini-ball { filter: brightness(.96); cursor: grabbing; }
-.mini-ball svg { width: 34px; height: 34px; }
+.mini-ball svg { width: 25px; height: 25px; }
 
 /* ---------- 右键菜单：窗口即菜单，圆角浮层 ---------- */
 .mini-root.menu-open {
