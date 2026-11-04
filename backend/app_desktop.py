@@ -328,6 +328,8 @@ class NativeApi:
     def __init__(self) -> None:
         self._win = None
         self._ball = None
+        self._tray = None             # TrayIcon，启动后挂上
+        self._in_tray = False         # 主窗口是否已收进托盘
         self._menu_watch = False
         self._panel_op = None          # 进行中的面板拖动/缩放
         self._panel_dragging = False
@@ -337,6 +339,13 @@ class NativeApi:
 
     def attach_ball(self, ball) -> None:
         self._ball = ball
+
+    def attach_tray(self, tray) -> None:
+        self._tray = tray
+
+    @property
+    def tray_ready(self) -> bool:
+        return bool(self._tray and self._tray.visible)
 
     # ---------------- 悬浮球：拖拽 / 吸附 ----------------
 
@@ -695,6 +704,54 @@ class NativeApi:
         u = _user32()
         return bool(u.IsWindowVisible(hwnd)) and not u.IsIconic(hwnd)
 
+    def _reveal_main(self) -> bool:
+        """显示主窗口（从最小化 / 托盘 / 普通隐藏都能还原），并尽量置前。"""
+        if not self._win:
+            return False
+        try:
+            self._win.show()
+        except Exception:  # noqa: BLE001
+            log.exception("显示主窗口失败")
+            return False
+        hwnd = find_window(MAIN_TITLE)
+        if hwnd:
+            u = _user32()
+            try:
+                u.ShowWindow(hwnd, 9)  # SW_RESTORE
+            except Exception:  # noqa: BLE001
+                log.exception("还原主窗口失败")
+            try:
+                u.SetForegroundWindow(hwnd)
+            except Exception:  # noqa: BLE001
+                pass  # 系统可能拒绝抢前台，静默即可
+        else:
+            try:
+                self._win.restore()
+            except Exception:  # noqa: BLE001
+                pass
+        self._in_tray = False
+        return True
+
+    def activate_main(self) -> bool:
+        """托盘图标单击 / 菜单「打开主界面」。"""
+        ok = self._reveal_main()
+        if ok:
+            log.info("从托盘唤起主窗口")
+        return ok
+
+    def minimize_to_tray(self) -> bool:
+        """主窗口被最小化时收进托盘：隐藏窗口，任务栏不留空壳。"""
+        if not self._win or self._in_tray:
+            return False
+        try:
+            self._win.hide()
+        except Exception:  # noqa: BLE001
+            log.exception("最小化到托盘失败")
+            return False
+        self._in_tray = True
+        log.info("主窗口已最小化到托盘")
+        return True
+
     def toggle_main(self) -> dict:
         """点击悬浮球：唤起 / 收起主窗口。"""
         if not self._win:
@@ -704,12 +761,7 @@ class NativeApi:
                 self._win.hide()
                 visible = False
             else:
-                self._win.show()
-                try:
-                    self._win.restore()
-                except Exception:  # noqa: BLE001
-                    pass  # 未最小化时 restore 会抛错，可忽略
-                visible = True
+                visible = self._reveal_main()
         except Exception:  # noqa: BLE001
             log.exception("切换主窗口失败")
             return {"visible": self._main_visible()}
@@ -723,14 +775,7 @@ class NativeApi:
         """显示主窗口，并可选地切换到指定画布。"""
         if not self._win:
             return False
-        try:
-            self._win.show()
-            try:
-                self._win.restore()
-            except Exception:  # noqa: BLE001
-                pass
-        except Exception:  # noqa: BLE001
-            log.exception("显示主窗口失败")
+        if not self._reveal_main():
             return False
         if tree_id:
             try:
@@ -744,7 +789,12 @@ class NativeApi:
 
     def quit_app(self) -> bool:
         """退出整个程序（后端一并停止）。"""
-        log.info("用户从悬浮球选择退出程序")
+        log.info("用户选择退出程序")
+        try:
+            if self._tray:
+                self._tray.stop()
+        except Exception:  # noqa: BLE001
+            log.exception("移除托盘图标失败")
         threading.Timer(0.3, os._exit, [0]).start()
         return True
 
@@ -756,6 +806,7 @@ class NativeApi:
             "showBall": bool(DESKTOP_CFG.get("showBall", True)),
             "autoStart": bool(DESKTOP_CFG.get("autoStart", False)),
             "ballVisible": self._ball_visible(),
+            "trayVisible": self.tray_ready,
             "canAutoStart": bool(getattr(sys, "frozen", False)),
         }
 
@@ -822,6 +873,8 @@ class NativeApi:
                 log.info("悬浮球已%s", "显示" if visible else "隐藏")
             except Exception:  # noqa: BLE001
                 log.exception("切换悬浮球显示失败")
+        if self._tray:
+            self._tray.refresh()  # 菜单里的「显示悬浮球」勾选状态跟着变
         return self.get_desktop_config()
 
     def hide_ball(self) -> bool:
@@ -868,24 +921,135 @@ class NativeApi:
         return path
 
 
-def watch_main_close(api: "NativeApi", grace: float = 15.0) -> None:
-    """主窗口被真正关闭时，连同悬浮球与后端一起退出。
+class TrayIcon:
+    """Windows 通知区域（右下角托盘）图标。
 
-    pywebview 的 GUI 循环要等**所有**窗口销毁后才返回；主窗口点了标题栏 ×
-    之后，悬浮球窗口还活着，进程就一直挂着——桌面上留一个点不动主窗口的球，
-    后台服务也不释放端口。这里轮询主窗口句柄：只有窗口被销毁才动手，
-    用 `hide()` 收起（球菜单点球）时句柄仍存在，不会被误判。
+    程序一启动就常驻：主窗口最小化时收进这里，点图标或菜单「打开主界面」
+    唤回；右键菜单还能切换悬浮球显示与退出软件。
+    """
+
+    def __init__(self, api: "NativeApi") -> None:
+        self._api = api
+        self._icon = None
+        self._thread = None
+
+    # ---- 状态 ----
+    @property
+    def visible(self) -> bool:
+        try:
+            return bool(self._icon and self._icon.visible)
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _icon_image(self):
+        """优先用应用图标，读不到就画一个纯色圆角块兜底。"""
+        from PIL import Image
+
+        for name in ("icon.png", "icon-256.png", "icon.ico"):
+            path = app_root() / "assets" / name
+            try:
+                if path.exists():
+                    img = Image.open(path)
+                    img.load()
+                    return img.convert("RGBA")
+            except Exception:  # noqa: BLE001
+                log.exception("加载托盘图标失败：%s", path)
+        log.warning("未找到托盘图标资源，使用兜底色块")
+        return Image.new("RGBA", (64, 64), (15, 180, 126, 255))
+
+    # ---- 生命周期 ----
+    def start(self) -> bool:
+        if self._icon is not None:
+            return True
+        try:
+            import pystray
+        except Exception:  # noqa: BLE001
+            log.warning("未安装 pystray，托盘功能不可用")
+            return False
+        try:
+            image = self._icon_image()
+            menu = pystray.Menu(
+                pystray.MenuItem("打开主界面", self._on_open, default=True),
+                pystray.MenuItem(
+                    "显示悬浮球",
+                    self._on_toggle_ball,
+                    checked=lambda _item: bool(DESKTOP_CFG.get("showBall", True)),
+                ),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("退出软件", self._on_quit),
+            )
+            self._icon = pystray.Icon("branch-chat-canvas", image, MAIN_TITLE, menu)
+        except Exception:  # noqa: BLE001
+            log.exception("创建托盘图标失败")
+            return False
+
+        self._thread = threading.Thread(target=self._run, daemon=True, name="tray-icon")
+        self._thread.start()
+        log.info("托盘图标已启动")
+        return True
+
+    def _run(self) -> None:
+        try:
+            self._icon.run()
+        except Exception:  # noqa: BLE001
+            log.exception("托盘图标消息循环异常退出")
+
+    def stop(self) -> None:
+        try:
+            if self._icon:
+                self._icon.stop()
+                log.info("托盘图标已移除")
+        except Exception:  # noqa: BLE001
+            log.exception("移除托盘图标失败")
+
+    def refresh(self) -> None:
+        """菜单勾选状态变化后刷新（pystray 的 checked 是惰性回调，需显式刷新）。"""
+        try:
+            if self._icon:
+                self._icon.update_menu()
+        except Exception:  # noqa: BLE001
+            log.exception("刷新托盘菜单失败")
+
+    # ---- 菜单动作（回调在托盘线程，动作尽量轻） ----
+    def _on_open(self, _icon=None, _item=None) -> None:
+        threading.Thread(target=self._api.activate_main, daemon=True).start()
+
+    def _on_toggle_ball(self, _icon=None, _item=None) -> None:
+        want = not bool(DESKTOP_CFG.get("showBall", True))
+        threading.Thread(target=self._api.show_ball, args=(want,), daemon=True).start()
+
+    def _on_quit(self, _icon=None, _item=None) -> None:
+        threading.Thread(target=self._api.quit_app, daemon=True).start()
+
+
+def watch_main_window(api: "NativeApi", grace: float = 15.0) -> None:
+    """盯着主窗口：被最小化就收进托盘，被真正关闭就整体退出。
+
+    1) 关闭（×）：pywebview 的 GUI 循环要等**所有**窗口销毁才返回，主窗口
+       关了而悬浮球还在，进程会一直挂着、球留在桌面——这里主动收尾。
+    2) 最小化：窗口不可见地收进托盘，任务栏不留空壳；点托盘图标唤回。
+    判断都基于窗口**句柄是否存在**：`hide()` 收起（球菜单点球）时句柄仍在，
+    `IsIconic` 为 False，不会被误当成关闭或最小化。
     """
     started = time.time()
     seen_main = False
     while True:
-        time.sleep(1.0)
-        if find_window(MAIN_TITLE):
+        time.sleep(0.6)
+        hwnd = find_window(MAIN_TITLE)
+        if hwnd:
             seen_main = True
+            if _user32().IsIconic(hwnd):
+                api.minimize_to_tray()
+            elif api._in_tray and _user32().IsWindowVisible(hwnd):
+                api._in_tray = False  # 用户自己把窗口还原了，状态复位
             continue
         if not seen_main and time.time() - started < grace:
             continue  # 启动初期窗口还没建出来，先等一等
         log.info("检测到主窗口已关闭，联动退出悬浮球与后端")
+        try:
+            api._tray and api._tray.stop()
+        except Exception:  # noqa: BLE001
+            log.exception("移除托盘图标失败")
         try:
             if api._ball:
                 api._ball.destroy()
@@ -977,6 +1141,9 @@ def main() -> None:
     )
     api.attach_ball(ball)
 
+    tray = TrayIcon(api)
+    api.attach_tray(tray)
+
     def _after_start() -> None:
         """GUI 起来后再校正悬浮球（创建时窗口尺寸/位置不一定精确）。"""
         log.info("GUI 就绪：悬浮球显示=%s，主窗口最小化启动=%s",
@@ -998,15 +1165,21 @@ def main() -> None:
                 ball.hide()
             except Exception:  # noqa: BLE001
                 log.exception("按配置隐藏悬浮球失败")
-        # 主窗口关闭 → 悬浮球一起退（否则进程挂着、球留在桌面）
-        threading.Thread(target=watch_main_close, args=(api,), daemon=True,
-                         name="main-close-watch").start()
+        # 托盘常驻：主窗口最小化后收进这里
+        try:
+            tray.start()
+        except Exception:  # noqa: BLE001
+            log.exception("启动托盘图标失败")
+        # 盯住主窗口：最小化 → 收托盘；关闭 → 连同悬浮球一起退出
+        threading.Thread(target=watch_main_window, args=(api,), daemon=True,
+                         name="main-window-watch").start()
 
     # 兜底：允许 WebView2 自带下载 UI（万一有网页式下载场景）
     webview.settings["ALLOW_DOWNLOADS"] = True
     webview.start(_after_start, debug=os.getenv("BCC_DEBUG") == "1")
     # 窗口关闭后退出：先停后端，再结束进程
     log.info("窗口关闭，退出")
+    tray.stop()
     server.should_exit = True
     os._exit(0)
 
