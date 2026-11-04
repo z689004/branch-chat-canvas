@@ -868,6 +868,33 @@ class NativeApi:
         return path
 
 
+def watch_main_close(api: "NativeApi", grace: float = 15.0) -> None:
+    """主窗口被真正关闭时，连同悬浮球与后端一起退出。
+
+    pywebview 的 GUI 循环要等**所有**窗口销毁后才返回；主窗口点了标题栏 ×
+    之后，悬浮球窗口还活着，进程就一直挂着——桌面上留一个点不动主窗口的球，
+    后台服务也不释放端口。这里轮询主窗口句柄：只有窗口被销毁才动手，
+    用 `hide()` 收起（球菜单点球）时句柄仍存在，不会被误判。
+    """
+    started = time.time()
+    seen_main = False
+    while True:
+        time.sleep(1.0)
+        if find_window(MAIN_TITLE):
+            seen_main = True
+            continue
+        if not seen_main and time.time() - started < grace:
+            continue  # 启动初期窗口还没建出来，先等一等
+        log.info("检测到主窗口已关闭，联动退出悬浮球与后端")
+        try:
+            if api._ball:
+                api._ball.destroy()
+        except Exception:  # noqa: BLE001
+            log.exception("销毁悬浮球窗口失败")
+        threading.Timer(0.4, os._exit, [0]).start()
+        return
+
+
 def main() -> None:
     root = app_root()
     dpath = data_dir()
@@ -971,6 +998,9 @@ def main() -> None:
                 ball.hide()
             except Exception:  # noqa: BLE001
                 log.exception("按配置隐藏悬浮球失败")
+        # 主窗口关闭 → 悬浮球一起退（否则进程挂着、球留在桌面）
+        threading.Thread(target=watch_main_close, args=(api,), daemon=True,
+                         name="main-close-watch").start()
 
     # 兜底：允许 WebView2 自带下载 UI（万一有网页式下载场景）
     webview.settings["ALLOW_DOWNLOADS"] = True
