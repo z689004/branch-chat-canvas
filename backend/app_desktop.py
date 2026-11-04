@@ -124,6 +124,10 @@ def make_toolwindow(hwnd: int) -> bool:
 
     悬浮球是纯桌面小挂件，不该在任务栏占一个条目；工具窗口样式正是
     Windows 为这类"工具浮窗"准备的。幂等：已是工具窗口则直接返回。
+
+    注意必须同时清掉 WS_EX_APPWINDOW：pywebview 创建窗口时会给顶层窗口
+    加上它，而 Win32 规则是"两个样式同时存在时 APPWINDOW 优先"，会把
+    窗口强行塞回任务栏和 Alt-Tab（只加 TOOLWINDOW 不够）。
     """
     if not hwnd:
         return False
@@ -131,12 +135,14 @@ def make_toolwindow(hwnd: int) -> bool:
         u = _user32()
         GWL_EXSTYLE = -20
         WS_EX_TOOLWINDOW = 0x00000080
+        WS_EX_APPWINDOW = 0x00040000
         style = u.GetWindowLongW(hwnd, GWL_EXSTYLE)
         if style is None or style < 0:
             return False
-        if style & WS_EX_TOOLWINDOW:
+        want = (style | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW
+        if style == want:
             return True
-        u.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_TOOLWINDOW)
+        u.SetWindowLongW(hwnd, GWL_EXSTYLE, want)
         # FRAMECHANGED 让外壳（任务栏/Explorer）立刻感知样式变化并刷新条目
         SWP_NOSIZE, SWP_NOMOVE, SWP_NOZORDER, SWP_FRAMECHANGED = 0x1, 0x2, 0x4, 0x20
         u.SetWindowPos(hwnd, 0, 0, 0, 0, 0,

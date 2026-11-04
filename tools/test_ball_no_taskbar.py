@@ -19,6 +19,7 @@ import time
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 GWL_EXSTYLE = -20
 WS_EX_TOOLWINDOW = 0x00000080
+WS_EX_APPWINDOW = 0x00040000
 WS_EX_TOPMOST = 0x00000008
 BALL_TITLE = "悬浮球"
 MAIN_TITLE = "分支对话画布"
@@ -82,12 +83,14 @@ def main() -> int:
         style = user32.GetWindowLongW(ball_hwnd, GWL_EXSTYLE)
         checks = []
 
-        if style & WS_EX_TOOLWINDOW:
-            print(f"✓ 悬浮球带 WS_EX_TOOLWINDOW（exstyle=0x{style & 0xFFFFFFFF:08X}），"
+        if style & WS_EX_TOOLWINDOW and not (style & WS_EX_APPWINDOW):
+            print(f"✓ 悬浮球带 WS_EX_TOOLWINDOW 且已清掉 WS_EX_APPWINDOW"
+                  f"（exstyle=0x{style & 0xFFFFFFFF:08X}），"
                   "不占任务栏、无缩略图预览、不出现在 Alt-Tab")
             checks.append(True)
         else:
-            print(f"✗ 悬浮球缺少 WS_EX_TOOLWINDOW（exstyle=0x{style & 0xFFFFFFFF:08X}）")
+            print(f"✗ 悬浮球样式不对（exstyle=0x{style & 0xFFFFFFFF:08X}，"
+                  "需要 TOOLWINDOW=1 且 APPWINDOW=0，否则会被强行塞回任务栏/Alt-Tab）")
             checks.append(False)
 
         if user32.IsWindowVisible(ball_hwnd):
