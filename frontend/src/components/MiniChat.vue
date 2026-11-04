@@ -328,7 +328,7 @@ onMounted(async () => {
   height: 100%;
   padding: 0;
   border: none;
-  border-radius: 12px; /* 与窗口系统圆角自然衔接 */
+  border-radius: 10px; /* 与窗口系统圆角自然衔接 */
   cursor: grab;
   color: #fff;
   display: flex;
