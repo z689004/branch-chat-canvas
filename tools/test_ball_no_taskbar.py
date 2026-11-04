@@ -51,15 +51,21 @@ def main() -> int:
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     env = dict(os.environ)
     env["BCC_DATA_DIR"] = os.path.join(os.environ.get("TEMP", "."), "bcc_ball_taskbar_test")
-    proc = subprocess.Popen(
-        [sys.executable, os.path.join(root, "backend", "app_desktop.py"), "--minimized"],
-        cwd=root, env=env,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if "exe" in sys.argv[1:]:  # 对打包产物冒烟
+        cmd = [os.path.join(root, "dist-exe", "BranchChatCanvas.exe"), "--minimized"]
+        cwd = root
+    else:  # 源码版
+        cmd = [sys.executable, os.path.join(root, "backend", "app_desktop.py"), "--minimized"]
+        cwd = root
+    proc = subprocess.Popen(cmd, cwd=cwd, env=env,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         deadline = time.time() + 90
         ball_hwnd = 0
         while time.time() < deadline:
-            wins = find_windows(proc.pid)
+            # 注意：onefile exe 是 bootloader 父进程 + 子进程双进程结构，
+            # 窗口属于子进程，不能用 proc.pid 过滤（标题已足够唯一）
+            wins = find_windows(0)
             ball_hwnd = wins.get(BALL_TITLE, 0)
             if ball_hwnd:
                 break
