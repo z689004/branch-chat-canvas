@@ -30,7 +30,7 @@
 
     <!-- ============ 迷你对话面板 ============ -->
     <div v-if="expanded" class="mini-panel">
-      <header class="mini-head">
+      <header class="mini-head" title="按住拖动面板" @pointerdown="onHeadDown">
         <span class="mini-dot"></span>
         <b>快速对话</b>
         <span class="mini-tree">{{ treeTitle || '正在准备…' }}</span>
@@ -61,6 +61,11 @@
           {{ sending ? '…' : '发送' }}
         </button>
       </div>
+
+      <!-- 自由缩放手柄：右边缘 / 下边缘 / 右下角 -->
+      <div class="mini-grip e" title="拖动调整宽度" @pointerdown.prevent.stop="(e) => onResizeDown(e, 'e')"></div>
+      <div class="mini-grip s" title="拖动调整高度" @pointerdown.prevent.stop="(e) => onResizeDown(e, 's')"></div>
+      <div class="mini-grip se" title="拖动自由缩放" @pointerdown.prevent.stop="(e) => onResizeDown(e, 'se')"></div>
     </div>
   </div>
 </template>
@@ -188,8 +193,36 @@ function onRootDown() {
   if (menuOpen.value) closeMenu()
 }
 
-// ---------------- 右键菜单项 ----------------
+// ---------------- 面板拖动 / 自由缩放 ----------------
+// 真正的位移/缩放由后端线程跟随鼠标完成（光标移出窗口也能连续缩放），
+// 前端只负责"按下时发起、松开时收尾"。
 
+function beginPanelOp(mode, axis) {
+  const a = api()
+  if (!a || !a.begin_panel_drag) return
+  document.documentElement.classList.add('panel-resizing')
+  try { a.begin_panel_drag(mode, axis) } catch (err) { /* ignore */ }
+}
+
+function endPanelOp() {
+  document.documentElement.classList.remove('panel-resizing')
+}
+
+/** 按下标题栏：拖动整个面板（头部按钮区域不触发） */
+function onHeadDown(e) {
+  if (e.button !== 0) return
+  if (e.target.closest('button')) return
+  e.preventDefault()
+  beginPanelOp('move', '')
+}
+
+/** 按下缩放手柄：dir = e（宽）/ s（高）/ se（自由） */
+function onResizeDown(e, dir) {
+  if (e.button !== 0) return
+  beginPanelOp('resize', dir)
+}
+
+// ---------------- 右键菜单项 ----------------
 async function quickChat() {
   menuOpen.value = false
   expanded.value = true
@@ -314,6 +347,10 @@ function onKeyDown(e) {
 onMounted(async () => {
   // 供后端在"点菜单外部"时回调，收起菜单视图
   window.__closeBallMenu = () => { menuOpen.value = false }
+  // 后端结束拖动/缩放后回调（光标离开窗口时前端收不到 pointerup）
+  window.__panelDragEnd = () => endPanelOp()
+  window.addEventListener('pointerup', endPanelOp)
+  window.addEventListener('pointercancel', endPanelOp)
   window.addEventListener('keydown', onKeyDown)
   window.addEventListener('resize', onWinResize)
   // 悬浮球窗口默认收起；主窗口里不该出现此组件
@@ -420,6 +457,7 @@ onMounted(async () => {
   padding: 0;
 }
 .mini-panel {
+  position: relative;
   display: flex;
   flex-direction: column;
   width: 100%;
@@ -435,6 +473,43 @@ onMounted(async () => {
   border-bottom: 1px solid var(--border-soft);
   background: var(--bg-sub);
   flex-shrink: 0;
+  cursor: grab;
+  user-select: none;
+}
+.mini-head:active { cursor: grabbing; }
+
+/* ---------- 自由缩放手柄（贴住窗口边缘，超出圆角部分不可见） ---------- */
+.mini-grip { position: absolute; z-index: 5; }
+.mini-grip.e {
+  top: 46px; right: 0; bottom: 14px; width: 6px;
+  cursor: ew-resize;
+}
+.mini-grip.s {
+  left: 14px; right: 14px; bottom: 0; height: 6px;
+  cursor: ns-resize;
+}
+.mini-grip.se {
+  right: 0; bottom: 0; width: 18px; height: 18px;
+  cursor: nwse-resize;
+}
+/* 右下角给一个隐约的斜纹提示，告诉用户这里能拉 */
+.mini-grip.se::after {
+  content: '';
+  position: absolute; right: 3px; bottom: 3px;
+  width: 8px; height: 8px;
+  border-right: 2px solid var(--border);
+  border-bottom: 2px solid var(--border);
+  border-bottom-right-radius: 3px;
+  opacity: .55;
+  transition: opacity .15s ease;
+}
+.mini-grip.se:hover::after { opacity: .95; }
+.mini-grip.e:hover, .mini-grip.s:hover { background: var(--bg-subtle); }
+
+/* 拖动/缩放期间全局光标，避免掠过其他元素时光标乱跳 */
+:global(html.panel-resizing), :global(html.panel-resizing *) {
+  cursor: grabbing !important;
+  user-select: none !important;
 }
 .mini-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px rgba(0, 180, 42, .15); }
 .mini-head b { font-size: 13px; color: var(--text); font-weight: 600; }

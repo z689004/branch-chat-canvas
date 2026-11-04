@@ -30,6 +30,7 @@ MAIN_TITLE = "分支对话画布"
 BALL_TITLE = "悬浮球"
 BALL_SIZE = 42
 PANEL_SIZE = (420, 620)
+PANEL_MIN = (320, 380)      # 快速面板可缩到的最小尺寸
 MENU_SIZE = (212, 306)      # 右键菜单展开时的窗口尺寸（球固定在右下角）
 SNAP_THRESHOLD = 32         # 距工作区边缘多少像素内自动吸附
 CLICK_TOLERANCE = 4         # 位移小于该值视为"点击"而非拖拽
@@ -42,6 +43,10 @@ DESKTOP_CFG = {
     "autoStart": False,     # 是否开机自启
     "ballX": None,          # 上次悬浮球位置（None = 默认右下角）
     "ballY": None,
+    "panelW": PANEL_SIZE[0],  # 快速面板尺寸（用户拖动缩放后记住）
+    "panelH": PANEL_SIZE[1],
+    "panelX": None,           # 上次快速面板位置（None = 贴着球展开）
+    "panelY": None,
 }
 
 log = logging.getLogger("desktop")
@@ -235,6 +240,19 @@ def initial_ball_pos() -> tuple:
     return x, y
 
 
+def panel_size() -> tuple:
+    """快速面板尺寸（逻辑像素）：优先上次用户拖出来的尺寸，并夹在合理范围内。"""
+    work = work_area_ui(0)
+    try:
+        w = int(DESKTOP_CFG.get("panelW") or PANEL_SIZE[0])
+        h = int(DESKTOP_CFG.get("panelH") or PANEL_SIZE[1])
+    except Exception:  # noqa: BLE001
+        w, h = PANEL_SIZE
+    w = max(PANEL_MIN[0], min(w, max(PANEL_MIN[0], work.right - work.left)))
+    h = max(PANEL_MIN[1], min(h, max(PANEL_MIN[1], work.bottom - work.top)))
+    return w, h
+
+
 def find_free_port(start: int = 8765, tries: int = 80) -> int:
     """从 start 起找一个空闲端口。绑定 0.0.0.0 探测，避免与已监听 127.0.0.1 的服务抢同一端口。"""
     forced = os.getenv("BCC_PORT")
@@ -271,6 +289,8 @@ class NativeApi:
         self._win = None
         self._ball = None
         self._menu_watch = False
+        self._panel_op = None          # 进行中的面板拖动/缩放
+        self._panel_dragging = False
 
     def attach(self, win) -> None:
         self._win = win
@@ -455,17 +475,24 @@ class NativeApi:
         try:
             log.info("迷你面板 %s", "展开" if expanded else "收起")
             if expanded:
-                w, h = PANEL_SIZE
-                bx, by = self._ball_pos()
-                # 面板向球的内侧展开（球贴右侧时向左长），并限制在工作区内
-                x = bx + BALL_SIZE - w
-                if x < work.left:
-                    x = bx
-                x = max(work.left, min(x, work.right - w))
-                y = by + BALL_SIZE - h
-                if y < work.top:
-                    y = by
-                y = max(work.top, min(y, work.bottom - h))
+                w, h = panel_size()
+                px, py = DESKTOP_CFG.get("panelX"), DESKTOP_CFG.get("panelY")
+                if isinstance(px, (int, float)) and isinstance(py, (int, float)):
+                    # 沿用上次手动摆放的位置（分辨率变化导致越界时夹回工作区）
+                    x, y = int(px), int(py)
+                    x = max(work.left, min(x, max(work.left, work.right - w)))
+                    y = max(work.top, min(y, max(work.top, work.bottom - h)))
+                else:
+                    bx, by = self._ball_pos()
+                    # 面板向球的内侧展开（球贴右侧时向左长），并限制在工作区内
+                    x = bx + BALL_SIZE - w
+                    if x < work.left:
+                        x = bx
+                    x = max(work.left, min(x, work.right - w))
+                    y = by + BALL_SIZE - h
+                    if y < work.top:
+                        y = by
+                    y = max(work.top, min(y, work.bottom - h))
                 self._ball.resize(w, h)
                 self._ball.move(int(x), int(y))
                 self._ensure_round_corners()
@@ -478,6 +505,146 @@ class NativeApi:
             log.exception("调整悬浮窗尺寸失败")
             return False
         return True
+
+    # ---------------- 快速面板：拖动 / 自由缩放 ----------------
+
+    def get_panel_rect(self) -> dict:
+        """当前快速面板几何（逻辑像素），供前端计算拖动 / 缩放基准。"""
+        hwnd = find_window(BALL_TITLE)
+        if not hwnd:
+            w, h = panel_size()
+            return {"x": 0, "y": 0, "w": w, "h": h}
+        r = window_rect_ui(hwnd)
+        return {
+            "x": int(r.left), "y": int(r.top),
+            "w": int(r.right - r.left), "h": int(r.bottom - r.top),
+        }
+
+    def set_panel_geometry(self, x: float = 0, y: float = 0, w: float = 0, h: float = 0,
+                           persist: bool = False) -> dict:
+        """拖动 / 缩放面板：统一按逻辑像素设置位置与尺寸，并保证整块留在工作区内。
+
+        persist=True 时把结果写进 desktop.json，下次展开沿用。
+        """
+        if not self._ball:
+            return {"ok": False}
+        hwnd = find_window(BALL_TITLE)
+        if not hwnd:
+            return {"ok": False}
+        work = work_area_ui(hwnd)
+        max_w = max(PANEL_MIN[0], work.right - work.left)
+        max_h = max(PANEL_MIN[1], work.bottom - work.top)
+        try:
+            w = max(PANEL_MIN[0], min(int(w), max_w))
+            h = max(PANEL_MIN[1], min(int(h), max_h))
+            x = max(work.left, min(int(x), max(work.left, work.right - w)))
+            y = max(work.top, min(int(y), max(work.top, work.bottom - h)))
+            cur = window_rect_ui(hwnd)
+            cur_w, cur_h = cur.right - cur.left, cur.bottom - cur.top
+            if cur_w != w or cur_h != h:
+                self._ball.resize(w, h)
+            if int(cur.left) != x or int(cur.top) != y:
+                self._ball.move(x, y)
+        except Exception:  # noqa: BLE001
+            log.exception("调整快速面板几何失败")
+            return {"ok": False}
+        if persist:
+            DESKTOP_CFG["panelX"] = x
+            DESKTOP_CFG["panelY"] = y
+            DESKTOP_CFG["panelW"] = w
+            DESKTOP_CFG["panelH"] = h
+            save_desktop_config()
+            log.info("快速面板几何已记住：%dx%d @ (%d, %d)", w, h, x, y)
+        return {"ok": True, "x": x, "y": y, "w": w, "h": h}
+
+    def begin_panel_drag(self, mode: str = "move", axis: str = "se") -> dict:
+        """开始面板拖动 / 缩放（由后端线程跟随鼠标）。
+
+        为什么不用前端的 pointermove：把面板往光标外侧拉大时，光标会跑到窗口之外，
+        WebView 收不到 mousemove，缩放立刻断掉。后端轮询 GetCursorPos 更可靠，
+        和「点菜单外部关闭」用的是同一套思路。
+
+        mode: move（整块拖动）/ resize（缩放）
+        axis: e（宽）/ s（高）/ se（两者同时，对应右下角手柄）
+        """
+        if not self._ball:
+            return {"ok": False}
+        hwnd = find_window(BALL_TITLE)
+        if not hwnd:
+            return {"ok": False}
+        if self._panel_op:
+            return {"ok": False, "reason": "busy"}
+        r = window_rect_ui(hwnd)
+        pt = wintypes.POINT()
+        _user32().GetCursorPos(ctypes.byref(pt))   # 物理像素
+        self._panel_op = {
+            "mode": "resize" if mode == "resize" else "move",
+            "axis": axis if axis in ("e", "s", "se") else "se",
+            "start": {"x": int(r.left), "y": int(r.top),
+                      "w": int(r.right - r.left), "h": int(r.bottom - r.top)},
+            "scale": ui_scale(hwnd) or 1.0,
+            "cx": int(pt.x), "cy": int(pt.y),
+        }
+        threading.Thread(target=self._run_panel_drag, daemon=True).start()
+        return {"ok": True, **self._panel_op["start"]}
+
+    def _run_panel_drag(self) -> None:
+        """跟随鼠标调整窗口位置 / 尺寸，直到左键松开。"""
+        u = _user32()
+        VK_LBUTTON = 0x01
+        op = self._panel_op
+        if not op:
+            return
+        self._panel_dragging = True
+        st, scale = op["start"], op["scale"] or 1.0
+        moved = False
+        try:
+            while self._panel_op is not None:
+                if not (u.GetAsyncKeyState(VK_LBUTTON) & 0x8000):
+                    break
+                pt = wintypes.POINT()
+                u.GetCursorPos(ctypes.byref(pt))
+                dx = int((pt.x - op["cx"]) / scale)
+                dy = int((pt.y - op["cy"]) / scale)
+                if not moved and abs(dx) < 2 and abs(dy) < 2:
+                    time.sleep(0.016)
+                    continue
+                moved = True
+                if op["mode"] == "move":
+                    x, y, w, h = st["x"] + dx, st["y"] + dy, st["w"], st["h"]
+                else:
+                    w = max(PANEL_MIN[0], st["w"] + dx) if op["axis"] in ("e", "se") else st["w"]
+                    h = max(PANEL_MIN[1], st["h"] + dy) if op["axis"] in ("s", "se") else st["h"]
+                    x, y = st["x"], st["y"]
+                res = self.set_panel_geometry(x, y, w, h, False)
+                if res.get("ok"):
+                    op["geo"] = res      # 以最后一次生效的几何为准
+                time.sleep(0.016)
+        except Exception:  # noqa: BLE001
+            log.exception("面板拖动/缩放异常")
+        finally:
+            self._panel_op = None
+            self._panel_dragging = False
+            geo = op.get("geo")
+            if moved and geo:
+                # 记住最后一次生效的几何（不回读窗口：resize 生效有延迟，回读会偏几像素）
+                DESKTOP_CFG["panelX"] = int(geo["x"])
+                DESKTOP_CFG["panelY"] = int(geo["y"])
+                DESKTOP_CFG["panelW"] = int(geo["w"])
+                DESKTOP_CFG["panelH"] = int(geo["h"])
+                save_desktop_config()
+                log.info("快速面板几何已记住：%dx%d @ (%d, %d)",
+                         int(geo["w"]), int(geo["h"]), int(geo["x"]), int(geo["y"]))
+            self._notify_panel_drag_end()
+
+    def _notify_panel_drag_end(self) -> None:
+        """通知前端收尾（清全局抓手光标）——光标离开窗口后 pointerup 可能收不到。"""
+        if not self._ball:
+            return
+        try:
+            self._ball.evaluate_js("window.__panelDragEnd && window.__panelDragEnd()")
+        except Exception:  # noqa: BLE001
+            log.exception("通知前端面板操作结束失败")
 
     # ---------------- 主窗口 ----------------
 
