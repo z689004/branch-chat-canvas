@@ -189,48 +189,82 @@ function desktopApi() {
   return (window.pywebview && window.pywebview.api) || null
 }
 
+const ballSwitchBusy = ref(false)
+const autoStartBusy = ref(false)
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
+
+/** pywebview 的 api 注入可能晚于页面挂载：轮询等待，直到可用或超时 */
+async function waitDesktopApi(fnName, tries = 12, gap = 250) {
+  for (let i = 0; i < tries; i++) {
+    const a = desktopApi()
+    if (a && a[fnName]) return a
+    await sleep(gap)
+  }
+  return null
+}
+
 async function refreshDesktop() {
-  const a = desktopApi()
-  if (!a || !a.get_desktop_config) return
+  const a = await waitDesktopApi('get_desktop_config', 14)
+  if (!a) return
   try {
     Object.assign(desktopCfg, await a.get_desktop_config())
   } catch (e) { /* 非桌面环境，忽略 */ }
 }
 
 async function toggleBall(value) {
-  const a = desktopApi()
-  if (!a || !a.set_desktop_config) {
+  const a = await waitDesktopApi('set_desktop_config')
+  if (!a) {
     ElMessage.info('悬浮球是桌面版专属功能，网页版不可用')
     return
   }
-  const want = value === undefined ? !desktopCfg.showBall : !!value
+  let want = value === undefined ? null : !!value
+  if (want === null) {
+    // 未给目标值（如 🎈 菜单里的切换）：以后端实际状态取反，避免本地状态不同步时发错方向
+    try { want = !(await a.get_desktop_config()).showBall }
+    catch (e) { want = !desktopCfg.showBall }
+  }
+  ballSwitchBusy.value = true
   try {
     Object.assign(desktopCfg, await a.set_desktop_config({ showBall: want }))
-    if (want) ElMessage.success('悬浮球已显示在桌面')
-    else ElMessage.info('已隐藏悬浮球，可在「🎈 → 悬浮球设置」重新打开')
+    if (want && !desktopCfg.ballVisible) {
+      ElMessage.warning('悬浮球未能显示，请重启程序后重试')
+    } else if (want) {
+      ElMessage.success('悬浮球已显示在桌面')
+    } else {
+      ElMessage.info('已隐藏悬浮球，可在「🎈 → 悬浮球设置」重新打开')
+    }
   } catch (e) {
     ElMessage.error(e.message || '切换悬浮球失败')
+  } finally {
+    ballSwitchBusy.value = false
   }
 }
 
 async function toggleAutoStart(value) {
-  const a = desktopApi()
-  if (!a || !a.set_desktop_config) {
+  const a = await waitDesktopApi('set_desktop_config')
+  if (!a) {
     ElMessage.info('开机启动仅在桌面版可用')
     return
   }
+  autoStartBusy.value = true
   try {
     Object.assign(desktopCfg, await a.set_desktop_config({ autoStart: !!value }))
     if (value && !desktopCfg.autoStart) ElMessage.warning('写入开机启动失败，请检查系统权限')
     else ElMessage.success(value ? '已开启开机自启：登录后自动显示悬浮球' : '已关闭开机自启')
   } catch (e) {
     ElMessage.error(e.message || '设置开机启动失败')
+  } finally {
+    autoStartBusy.value = false
   }
 }
 
 async function resetBallPos() {
-  const a = desktopApi()
-  if (!a || !a.reset_ball_pos) return
+  const a = await waitDesktopApi('reset_ball_pos')
+  if (!a) {
+    ElMessage.info('该功能仅在桌面版可用')
+    return
+  }
   try {
     await a.reset_ball_pos()
     ElMessage.success('悬浮球已回到屏幕右下角')
@@ -1089,7 +1123,7 @@ onBeforeUnmount(() => {
           <div class="set-title">显示悬浮球</div>
           <div class="set-desc">置顶小圆球，始终浮在其他软件之上；左键唤起 / 收起主窗口，右键更多操作</div>
         </div>
-        <el-switch :model-value="desktopCfg.showBall" :disabled="!desktopCfg.available" @change="toggleBall" />
+        <el-switch :model-value="desktopCfg.showBall" :loading="ballSwitchBusy" @change="toggleBall" />
       </div>
       <div class="set-row">
         <div class="set-text">
@@ -1098,6 +1132,7 @@ onBeforeUnmount(() => {
         </div>
         <el-switch
           :model-value="desktopCfg.autoStart"
+          :loading="autoStartBusy"
           :disabled="!desktopCfg.available || !desktopCfg.canAutoStart"
           @change="toggleAutoStart"
         />
@@ -1107,7 +1142,7 @@ onBeforeUnmount(() => {
           <div class="set-title">悬浮球位置</div>
           <div class="set-desc">按住可拖动，靠近屏幕边缘会自动吸附；位置会被记住</div>
         </div>
-        <el-button size="small" :disabled="!desktopCfg.available" @click="resetBallPos">回到右下角</el-button>
+        <el-button size="small" @click="resetBallPos">回到右下角</el-button>
       </div>
       <div v-if="desktopCfg.available && !desktopCfg.canAutoStart" class="set-note">
         提示：源码运行模式下「开机启动」不可用，请使用打包后的 exe。

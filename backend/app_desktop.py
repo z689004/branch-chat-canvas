@@ -519,15 +519,24 @@ class NativeApi:
         return self.get_desktop_config()
 
     def show_ball(self, visible: bool = True) -> dict:
-        """显示 / 隐藏悬浮球，并记住开关状态。"""
+        """显示 / 隐藏悬浮球，并记住开关状态。
+
+        显示前先恢复成标准球（84x84、回到记住的位置），避免球窗口
+        此前停留在右键菜单 / 迷你面板的展开尺寸，show 出来是一块
+        残缺窗口、看起来像"开关没反应"。
+        """
         DESKTOP_CFG["showBall"] = bool(visible)
         save_desktop_config()
         if self._ball:
             try:
                 if visible:
+                    self._ball.resize(BALL_SIZE, BALL_SIZE)
+                    bx, by = self._ball_pos()
+                    self._ball.move(int(bx), int(by))
                     self._ball.show()
                 else:
                     self._ball.hide()
+                log.info("悬浮球已%s", "显示" if visible else "隐藏")
             except Exception:  # noqa: BLE001
                 log.exception("切换悬浮球显示失败")
         return self.get_desktop_config()
