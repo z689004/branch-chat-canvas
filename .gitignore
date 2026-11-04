@@ -41,3 +41,6 @@ backend/data/*.sqlite3
 .DS_Store
 Thumbs.db
 *.swp
+frontend/public.bak/
+frontend/public.old/
+frontend/dist.old/

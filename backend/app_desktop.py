@@ -343,6 +343,16 @@ class NativeApi:
     def attach_tray(self, tray) -> None:
         self._tray = tray
 
+    def _notify_frontend_cfg(self) -> None:
+        """把最新桌面配置推给主窗口前端（托盘 / 球上改了状态，设置面板要跟着变）。"""
+        try:
+            if self._win:
+                payload = json.dumps(self.get_desktop_config())
+                self._win.evaluate_js(
+                    f"window.__onDesktopCfgChanged && window.__onDesktopCfgChanged({payload})")
+        except Exception:  # noqa: BLE001
+            log.exception("推送桌面配置到前端失败")
+
     @property
     def tray_ready(self) -> bool:
         return bool(self._tray and self._tray.visible)
@@ -720,10 +730,22 @@ class NativeApi:
                 u.ShowWindow(hwnd, 9)  # SW_RESTORE
             except Exception:  # noqa: BLE001
                 log.exception("还原主窗口失败")
+            # Windows 限制后台进程抢前台，直接 SetForegroundWindow 可能只让
+            # 任务栏图标闪烁；借 AttachThreadInput 共享前台线程的输入状态绕过
             try:
+                fg = u.GetForegroundWindow()
+                fg_tid = u.GetWindowThreadProcessId(fg, None)
+                cur_tid = u.GetWindowThreadProcessId(hwnd, None)
+                attached = fg_tid and fg_tid != cur_tid
+                if attached:
+                    u.AttachThreadInput(cur_tid, fg_tid, True)
+                u.BringWindowToTop(hwnd)
                 u.SetForegroundWindow(hwnd)
+                u.SetFocus(hwnd)
+                if attached:
+                    u.AttachThreadInput(cur_tid, fg_tid, False)
             except Exception:  # noqa: BLE001
-                pass  # 系统可能拒绝抢前台，静默即可
+                log.exception("置前主窗口失败")
         else:
             try:
                 self._win.restore()
@@ -849,6 +871,7 @@ class NativeApi:
             ok = apply_autostart(want)
             DESKTOP_CFG["autoStart"] = bool(want and ok)
             save_desktop_config()
+        self._notify_frontend_cfg()
         return self.get_desktop_config()
 
     def show_ball(self, visible: bool = True) -> dict:
@@ -875,6 +898,7 @@ class NativeApi:
                 log.exception("切换悬浮球显示失败")
         if self._tray:
             self._tray.refresh()  # 菜单里的「显示悬浮球」勾选状态跟着变
+        self._notify_frontend_cfg()
         return self.get_desktop_config()
 
     def hide_ball(self) -> bool:
@@ -1059,11 +1083,34 @@ def watch_main_window(api: "NativeApi", grace: float = 15.0) -> None:
         return
 
 
+def acquire_single_instance() -> bool:
+    """单实例保护：已有实例在跑时，唤起它的主窗口并结束自己。
+
+    没有这一步，用户点任务栏固定的程序图标（或再双击一次 exe）会拉起第二个
+    进程——要等 5~10 秒解包才见窗口，看起来就像「点了没反应」；数据目录里
+    两个后端还会抢同一份 JSON。现在改为：唤醒已运行实例的主界面。
+    """
+    kernel32 = ctypes.windll.kernel32
+    kernel32.CreateMutexW(None, False, "Local\\BranchChatCanvasSingleInstance")
+    if kernel32.GetLastError() != 183:  # ERROR_ALREADY_EXISTS
+        return True
+    hwnd = ctypes.windll.user32.FindWindowW(None, MAIN_TITLE)
+    log.info("检测到已有实例运行，唤起其主窗口后退出")
+    if hwnd:
+        u = _user32()
+        u.ShowWindow(hwnd, 9)  # SW_RESTORE：隐藏 / 最小化都能还原显示
+        u.SetForegroundWindow(hwnd)
+    return False
+
+
 def main() -> None:
     root = app_root()
     dpath = data_dir()
     setup_logging(dpath)
     load_desktop_config()
+
+    if not acquire_single_instance():
+        return
 
     start_minimized = "--minimized" in sys.argv
 

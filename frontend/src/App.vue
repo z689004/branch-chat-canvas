@@ -798,6 +798,15 @@ onMounted(() => {
       nextTick(() => fitAll(0.25, 400))
     } catch (e) { /* ignore */ }
   }
+  // 托盘 / 悬浮球上改了桌面配置时，桌面壳会推送最新状态（设置面板同步）
+  window.__onDesktopCfgChanged = (cfg) => {
+    if (cfg && typeof cfg === 'object') Object.assign(desktopCfg, cfg)
+  }
+  // 自动化测试 / 桌面壳可用：打开悬浮球设置面板
+  window.__openBallSettings = () => {
+    refreshDesktop()
+    desktopDialog.value = true
+  }
   store.init().then(() => nextTick(() => fitAll(0.3, 300)))
 })
 function onDocMouseDown(e) {
@@ -810,6 +819,8 @@ onBeforeUnmount(() => {
   document.removeEventListener('mousedown', onDocMouseDown)
   window.removeEventListener('pywebviewready', refreshDesktop)
   delete window.__openTreeFromMini
+  delete window.__onDesktopCfgChanged
+  delete window.__openBallSettings
   cancelBranchHide()
 })
 </script>
@@ -1211,7 +1222,7 @@ onBeforeUnmount(() => {
           <div class="set-title">显示悬浮球</div>
           <div class="set-desc">置顶小圆球，始终浮在其他软件之上；左键唤起 / 收起主窗口，右键更多操作</div>
         </div>
-        <el-switch :model-value="desktopCfg.showBall" :loading="ballSwitchBusy" @change="toggleBall" />
+        <el-switch :model-value="desktopCfg.showBall" :loading="ballSwitchBusy" @change="toggleBall()" />
       </div>
       <div class="set-row">
         <div class="set-text">
