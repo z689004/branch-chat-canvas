@@ -41,7 +41,7 @@ from fastapi.staticfiles import StaticFiles
 import llm_client
 import storage
 from models import (
-    TreeCreateBody, TreeUpdateBody, TreeClearMessagesBody, ChildCreateBody, NodeUpdateBody,
+    TreeCreateBody, TreeUpdateBody, TreeClearMessagesBody, MiniTreeBody, ChildCreateBody, NodeUpdateBody,
     SendBody, DuplicateBody, SnapshotBody,
 )
 
@@ -175,7 +175,35 @@ def tree_get(treeId: str):
 @app.delete("/api/tree/delete")
 def tree_delete(treeId: str):
     storage.delete_tree(treeId)
+    # 被删的正好是悬浮速记绑定的画布时，解除绑定，避免悬浮球下次拿到失效 id
+    if storage.get_meta("miniTreeId") == treeId:
+        storage.set_meta("miniTreeId", "")
     return {"ok": True}
+
+
+@app.get("/api/tree/mini")
+def tree_mini_get():
+    """悬浮球「悬浮速记」当前绑定的画布。
+
+    本地存储（localStorage）在悬浮球独立窗口 / 重启后可能读不到，
+    由后端记住这个 id，保证每次启动复用同一块画布，不会反复新建空白画布。
+    """
+    tid = storage.get_meta("miniTreeId") or ""
+    if tid:
+        tree = storage.load_tree(tid)
+        if tree:
+            return {"treeId": tid, "title": tree.get("title") or "悬浮速记"}
+        storage.set_meta("miniTreeId", "")  # 画布已被删除，清理失效绑定
+    return {"treeId": "", "title": ""}
+
+
+@app.post("/api/tree/mini")
+def tree_mini_set(body: MiniTreeBody):
+    tid = (body.treeId or "").strip()
+    if tid and not storage.load_tree(tid):
+        raise HTTPException(status_code=404, detail="画布不存在")
+    storage.set_meta("miniTreeId", tid)
+    return {"ok": True, "treeId": tid}
 
 
 @app.post("/api/tree/clear-messages")

@@ -129,8 +129,18 @@ async function newTree() {
   catch (e) { ElMessage.error(e.message) }
 }
 async function switchTree(treeId) {
-  try { await store.loadTree(treeId); nextTick(() => fitAll(0.25, 300)) }
-  catch (e) { ElMessage.error(e.message) }
+  try {
+    await store.loadTree(treeId)
+    nextTick(() => fitAll(0.25, 300))
+  } catch (e) {
+    // 画布可能已被删除 / 数据残留：刷新列表把点不开的条目清掉
+    await store.refreshTreeList()
+    if (String(e.message || '').includes('不存在')) {
+      ElMessage.warning('该画布已不存在，已从列表中移除')
+    } else {
+      ElMessage.error(e.message)
+    }
+  }
 }
 
 async function downloadText(text, filename, mime) {

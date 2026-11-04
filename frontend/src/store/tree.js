@@ -123,7 +123,11 @@ export const useTreeStore = defineStore('tree', {
 
     // ---------- 画布级 ----------
     async refreshTreeList() {
-      try { this.treeList = await listTrees() } catch (e) { this.treeList = [] }
+      try {
+        const list = await listTrees()
+        // 过滤掉没有 treeId 的脏数据（历史上配置文件曾被误列进画布列表）
+        this.treeList = (list || []).filter(t => t && typeof t.treeId === 'string' && t.treeId)
+      } catch (e) { this.treeList = [] }
     },
 
     async init() {

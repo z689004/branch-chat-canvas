@@ -46,6 +46,11 @@ class TreeClearMessagesBody(BaseModel):
     treeId: str
 
 
+class MiniTreeBody(BaseModel):
+    """悬浮球「悬浮速记」画布绑定：treeId 传空字符串表示解除绑定"""
+    treeId: str = ""
+
+
 class ChildCreateBody(BaseModel):
     treeId: str
     parentId: str

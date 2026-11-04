@@ -26,6 +26,10 @@ export const deleteNodeApi = (treeId, nodeId) =>
   request(`/api/node/delete?treeId=${encodeURIComponent(treeId)}&nodeId=${encodeURIComponent(nodeId)}`, { method: 'DELETE' })
 export const deleteTreeApi = (treeId) =>
   request(`/api/tree/delete?treeId=${encodeURIComponent(treeId)}`, { method: 'DELETE' })
+/** 悬浮速记画布绑定（由后端记住，避免每次启动重复新建空白画布） */
+export const getMiniTreeApi = () => request('/api/tree/mini')
+export const setMiniTreeApi = (treeId) =>
+  request('/api/tree/mini', { method: 'POST', body: JSON.stringify({ treeId }) })
 /** 清空画布：保留节点结构，只清除所有节点的对话记录 */
 export const clearTreeMessages = (treeId) =>
   request('/api/tree/clear-messages', { method: 'POST', body: JSON.stringify({ treeId }) })

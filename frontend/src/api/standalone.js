@@ -183,6 +183,7 @@ const isDefaultTitle = (t) => [ROOT_TITLE_DEFAULT, CHILD_TITLE_DEFAULT, '新对�
 export async function listTrees() {
   const all = loadAll()
   return Object.values(all)
+    .filter((t) => t && typeof t.treeId === 'string' && t.treeId)
     .map((t) => ({
       treeId: t.treeId,
       title: t.title || '未命名画布',
@@ -209,6 +210,19 @@ export async function renameTreeApi(treeId, title) {
   tree.title = title
   writeTree(tree)
   return { ok: true, title }
+}
+
+/** 悬浮速记画布绑定：纯前端模式直接用 localStorage */
+export async function getMiniTreeApi() {
+  const tid = localStorage.getItem('bcc:miniTreeId') || ''
+  if (!tid || !loadAll()[tid]) return { treeId: '', title: '' }
+  const t = loadAll()[tid]
+  return { treeId: tid, title: t.title || '悬浮速记' }
+}
+
+export async function setMiniTreeApi(treeId) {
+  localStorage.setItem('bcc:miniTreeId', treeId || '')
+  return { ok: true, treeId: treeId || '' }
 }
 
 export async function deleteTreeApi(treeId) {

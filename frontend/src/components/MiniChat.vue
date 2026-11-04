@@ -68,7 +68,7 @@
 <script setup>
 import { ref, reactive, nextTick, onMounted } from 'vue'
 import MarkdownIt from 'markdown-it'
-import { createTree, getTree, sendQuestionStream } from '../api'
+import { createTree, getTree, sendQuestionStream, getMiniTreeApi, setMiniTreeApi } from '../api'
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
 const renderMd = (s) => md.render(s || '')
@@ -230,19 +230,32 @@ async function openMain() {
   await collapse()
 }
 
-/** 取用/创建「悬浮速记」画布，并取它的根节点作为对话载体 */
+/** 取用/创建「悬浮速记」画布，并取它的根节点作为对话载体
+ *  查找顺序：本地存储 → 后端口径（悬浮球窗口与主窗口存储可能隔离，重启后读不到）→ 新建
+ *  这样每次启动复用同一块画布，不会每次开程序都多出一个空白画布 */
 async function ensureTree() {
   if (treeId.value && nodeId) return
   const id = localStorage.getItem(MINI_KEY) || ''
   if (id) {
     try {
       const t = await getTree(id)
+      localStorage.setItem(MINI_KEY, t.treeId)
       bindTree(t)
       return
-    } catch (e) { /* 画布已被删除，重建 */ }
+    } catch (e) { /* 画布已被删除，继续往下找 */ }
   }
+  try {
+    const bound = await getMiniTreeApi()
+    if (bound && bound.treeId) {
+      const t = await getTree(bound.treeId)
+      localStorage.setItem(MINI_KEY, t.treeId)
+      bindTree(t)
+      return
+    }
+  } catch (e) { /* 后端未就绪时忽略 */ }
   const created = await createTree(MINI_TITLE)
   localStorage.setItem(MINI_KEY, created.treeId)
+  try { await setMiniTreeApi(created.treeId) } catch (e) { /* ignore */ }
   bindTree(created)
 }
 
