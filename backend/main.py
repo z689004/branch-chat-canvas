@@ -180,20 +180,28 @@ def tree_delete(treeId: str):
 
 @app.post("/api/tree/clear-messages")
 def tree_clear_messages(body: TreeClearMessagesBody):
-    """清空画布：保留节点结构，只抹掉每个节点的对话记录。"""
+    """清空会话：删除全部分支与对话，只保留一个空白根会话（可撤销）。"""
     tree = get_tree_or_404(body.treeId)
-    cleared = 0
-    touched = 0
-    for n in tree.get("nodeList", []):
-        msgs = n.get("messages") or []
-        if msgs:
-            cleared += len(msgs)
-            touched += 1
-            n["messages"] = []
-            n["updateTime"] = now()
+    nodes = tree.get("nodeList", [])
+    cleared = sum(len(n.get("messages") or []) for n in nodes)
+    roots = [n for n in nodes if not n.get("parentId")]
+    if roots:
+        root = roots[0]
+        root["messages"] = []
+        root["selectedContext"] = ""
+        root["title"] = ROOT_TITLE_DEFAULT
+        root["isCollapsed"] = False
+        root["starred"] = False
+        root["x"], root["y"] = 0.0, 0.0
+        root["size"] = {}
+        root["updateTime"] = now()
+        tree["nodeList"] = [root]
+    else:
+        t = now()
+        tree["nodeList"] = [_new_node(None, ROOT_TITLE_DEFAULT, x=0.0, y=0.0)]
     tree["updateTime"] = now()
     storage.save_tree(tree)
-    return {"ok": True, "cleared": cleared, "nodes": touched}
+    return {"ok": True, "cleared": cleared, "removed": len(nodes) - len(tree["nodeList"])}
 
 
 # ---------------- 节点级接口 ----------------

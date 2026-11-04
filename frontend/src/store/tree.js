@@ -333,7 +333,7 @@ export const useTreeStore = defineStore('tree', {
       return !n.starred
     },
 
-    /** 清空画布：保留节点结构，只抹掉全部对话记录（可撤销） */
+    /** 清空会话：删除全部分支与对话，只留一个空白根会话（可撤销） */
     async clearMessages() {
       if (!this.treeId) return 0
       this.commit()

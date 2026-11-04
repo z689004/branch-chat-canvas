@@ -218,20 +218,28 @@ export async function deleteTreeApi(treeId) {
   return { ok: true }
 }
 
-/** 清空画布：保留节点结构，只清除所有节点的对话记录 */
+/** 清空会话：删除全部分支与对话，只保留一个空白根会话 */
 export async function clearTreeMessages(treeId) {
   const tree = readTree(treeId)
-  let cleared = 0
-  let touched = 0
-  for (const n of tree.nodeList || []) {
-    if (n.messages && n.messages.length) {
-      cleared += n.messages.length
-      touched += 1
-      n.messages = []
-    }
+  const nodes = tree.nodeList || []
+  const cleared = nodes.reduce((s, n) => s + (n.messages?.length || 0), 0)
+  const roots = nodes.filter((n) => !n.parentId)
+  if (roots.length) {
+    const root = roots[0]
+    root.messages = []
+    root.selectedContext = ''
+    root.title = '新对话'
+    root.isCollapsed = false
+    root.starred = false
+    root.x = 0
+    root.y = 0
+    root.size = {}
+    tree.nodeList = [root]
+  } else {
+    tree.nodeList = []
   }
   writeTree(tree)
-  return { ok: true, cleared, nodes: touched }
+  return { ok: true, cleared, removed: nodes.length - tree.nodeList.length }
 }
 
 // ---------------- 节点级接口 ----------------

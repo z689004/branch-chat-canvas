@@ -2,7 +2,6 @@
 import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { VueFlow, useVueFlow } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
-import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useTreeStore } from './store/tree'
@@ -334,7 +333,7 @@ function exportBranch(nodeId) {
 }
 
 let lastClearAt = 0
-/** 清空此会话的全部对话：保留节点结构，只抹掉问答内容 */
+/** 清空此会话：删除全部分支与对话，只留一个空白根会话 */
 async function clearConversations() {
   if (!store.treeId) return
   if (Date.now() - lastClearAt < 3000) {
@@ -343,21 +342,22 @@ async function clearConversations() {
   }
   const count = store.nodes.length
   const msgCount = store.nodes.reduce((s, n) => s + (n.messages?.length || 0), 0)
-  if (!msgCount) {
+  if (!msgCount && count <= 1) {
     ElMessage.info('当前会话还没有对话内容')
     return
   }
   try {
     await ElMessageBox.confirm(
-      `将清空画布「${store.treeTitle || '未命名画布'}」中 ${count} 个节点的全部 ${msgCount} 条对话记录（节点与分支结构保留）。此操作可用 Ctrl + Z 撤销，确认继续？`,
+      `将清空整个会话：删除全部 ${count} 个节点（含 ${msgCount} 条对话），只保留一个空白根会话。此操作可用 Ctrl + Z 撤销，确认继续？`,
       '清空对话',
       { type: 'warning', confirmButtonText: '确认清空', cancelButtonText: '取消' }
     )
   } catch (e) { return }
   try {
-    const cleared = await store.clearMessages()
+    await store.clearMessages()
     lastClearAt = Date.now()
-    ElMessage.success(`已清空 ${cleared} 条对话`)
+    ElMessage.success('已清空，当前会话仅保留一个空白根会话')
+    nextTick(() => fitAll(0.25, 300))
   } catch (e) {
     ElMessage.error(e.message)
   }
@@ -883,7 +883,7 @@ onBeforeUnmount(() => {
             </el-dropdown-menu>
           </template>
         </el-dropdown>
-        <el-tooltip content="清空此会话的全部对话（节点与分支结构保留，可撤销）" placement="bottom">
+        <el-tooltip content="清空整个会话：删除全部分支与对话，只留一个空白根会话（可撤销）" placement="bottom">
           <el-button size="small" plain @click="clearConversations">🧹 清空对话</el-button>
         </el-tooltip>
         <el-tooltip content="删除整个画布（含全部节点与对话，不可恢复）" placement="bottom">
@@ -939,7 +939,7 @@ onBeforeUnmount(() => {
           :size="1"
           :pattern-color="theme === 'dark' ? '#4a4d55' : '#c9cdd4'"
         />
-        <Controls :show-interactive="false" />
+        <!-- 缩放控件由左下角自定义缩放条承担，不再渲染 VueFlow 默认 Controls（避免重叠） -->
         <MiniMap
           v-if="showMinimap"
           pannable
