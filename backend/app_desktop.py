@@ -31,6 +31,7 @@ BALL_TITLE = "悬浮球"
 BALL_SIZE = 42
 PANEL_SIZE = (420, 620)
 PANEL_MIN = (320, 380)      # 快速面板可缩到的最小尺寸
+PANEL_AXES = ("n", "s", "e", "w", "ne", "nw", "se", "sw")   # 可拖拽缩放的边 / 角
 MENU_SIZE = (212, 306)      # 右键菜单展开时的窗口尺寸（球固定在右下角）
 SNAP_THRESHOLD = 32         # 距工作区边缘多少像素内自动吸附
 CLICK_TOLERANCE = 4         # 位移小于该值视为"点击"而非拖拽
@@ -251,6 +252,45 @@ def panel_size() -> tuple:
     w = max(PANEL_MIN[0], min(w, max(PANEL_MIN[0], work.right - work.left)))
     h = max(PANEL_MIN[1], min(h, max(PANEL_MIN[1], work.bottom - work.top)))
     return w, h
+
+
+def resized_rect(axis: str, st: dict, dx: int, dy: int, work: tuple) -> tuple:
+    """按拖拽的边 / 角计算新的 (x, y, w, h)。
+
+    位移始终相对"按下瞬间"的几何计算，而不是逐帧累加——
+    这样即使某一帧被工作区或最小尺寸夹住，也不会产生累积漂移。
+    axis 里的 n/s 表示上下边，e/w 表示左右边，角是两个字母组合。
+    """
+    west, east = "w" in axis, "e" in axis
+    north, south = "n" in axis, "s" in axis
+    x, y, w, h = st["x"], st["y"], st["w"], st["h"]
+
+    if east:
+        w = st["w"] + dx
+    elif west:
+        w = st["w"] - dx
+    if south:
+        h = st["h"] + dy
+    elif north:
+        h = st["h"] - dy
+
+    # 顶到最小尺寸时，被拖的边停住，对边保持不动
+    w = max(PANEL_MIN[0], w)
+    h = max(PANEL_MIN[1], h)
+    if west:
+        x = st["x"] + st["w"] - w
+    if north:
+        y = st["y"] + st["h"] - h
+
+    # 越过工作区边界时同样保持对边不动（把拖拽方向"顶住"）
+    wl, wt, _wr, _wb = work
+    if west and x < wl:
+        x = wl
+        w = st["x"] + st["w"] - wl
+    if north and y < wt:
+        y = wt
+        h = st["y"] + st["h"] - wt
+    return x, y, w, h
 
 
 def find_free_port(start: int = 8765, tries: int = 80) -> int:
@@ -565,7 +605,7 @@ class NativeApi:
         和「点菜单外部关闭」用的是同一套思路。
 
         mode: move（整块拖动）/ resize（缩放）
-        axis: e（宽）/ s（高）/ se（两者同时，对应右下角手柄）
+        axis: n / s / e / w / ne / nw / se / sw —— 对应按下的是哪条边或哪个角
         """
         if not self._ball:
             return {"ok": False}
@@ -575,13 +615,15 @@ class NativeApi:
         if self._panel_op:
             return {"ok": False, "reason": "busy"}
         r = window_rect_ui(hwnd)
+        work = work_area_ui(hwnd)
         pt = wintypes.POINT()
         _user32().GetCursorPos(ctypes.byref(pt))   # 物理像素
         self._panel_op = {
             "mode": "resize" if mode == "resize" else "move",
-            "axis": axis if axis in ("e", "s", "se") else "se",
+            "axis": axis if axis in PANEL_AXES else "se",
             "start": {"x": int(r.left), "y": int(r.top),
                       "w": int(r.right - r.left), "h": int(r.bottom - r.top)},
+            "work": (int(work.left), int(work.top), int(work.right), int(work.bottom)),
             "scale": ui_scale(hwnd) or 1.0,
             "cx": int(pt.x), "cy": int(pt.y),
         }
@@ -613,9 +655,7 @@ class NativeApi:
                 if op["mode"] == "move":
                     x, y, w, h = st["x"] + dx, st["y"] + dy, st["w"], st["h"]
                 else:
-                    w = max(PANEL_MIN[0], st["w"] + dx) if op["axis"] in ("e", "se") else st["w"]
-                    h = max(PANEL_MIN[1], st["h"] + dy) if op["axis"] in ("s", "se") else st["h"]
-                    x, y = st["x"], st["y"]
+                    x, y, w, h = resized_rect(op["axis"], st, dx, dy, op["work"])
                 res = self.set_panel_geometry(x, y, w, h, False)
                 if res.get("ok"):
                     op["geo"] = res      # 以最后一次生效的几何为准

@@ -61,12 +61,21 @@
           {{ sending ? '…' : '发送' }}
         </button>
       </div>
-
-      <!-- 自由缩放手柄：右边缘 / 下边缘 / 右下角 -->
-      <div class="mini-grip e" title="拖动调整宽度" @pointerdown.prevent.stop="(e) => onResizeDown(e, 'e')"></div>
-      <div class="mini-grip s" title="拖动调整高度" @pointerdown.prevent.stop="(e) => onResizeDown(e, 's')"></div>
-      <div class="mini-grip se" title="拖动自由缩放" @pointerdown.prevent.stop="(e) => onResizeDown(e, 'se')"></div>
     </div>
+
+    <!-- 自由缩放手柄：四边 + 四角，任意方向都能拉。
+         必须放在 .mini-panel 之外——panel 有 border-radius + overflow:hidden，
+         会把贴角的元素裁掉，导致四个角几乎点不到。 -->
+    <template v-if="expanded">
+      <div class="mini-grip n"  title="拖动调整高度" @pointerdown.prevent.stop="onResizeDown($event, 'n')"></div>
+      <div class="mini-grip s"  title="拖动调整高度" @pointerdown.prevent.stop="onResizeDown($event, 's')"></div>
+      <div class="mini-grip w"  title="拖动调整宽度" @pointerdown.prevent.stop="onResizeDown($event, 'w')"></div>
+      <div class="mini-grip e"  title="拖动调整宽度" @pointerdown.prevent.stop="onResizeDown($event, 'e')"></div>
+      <div class="mini-grip nw" title="拖动自由缩放" @pointerdown.prevent.stop="onResizeDown($event, 'nw')"></div>
+      <div class="mini-grip ne" title="拖动自由缩放" @pointerdown.prevent.stop="onResizeDown($event, 'ne')"></div>
+      <div class="mini-grip sw" title="拖动自由缩放" @pointerdown.prevent.stop="onResizeDown($event, 'sw')"></div>
+      <div class="mini-grip se" title="拖动自由缩放" @pointerdown.prevent.stop="onResizeDown($event, 'se')"></div>
+    </template>
   </div>
 </template>
 
@@ -197,9 +206,18 @@ function onRootDown() {
 // 真正的位移/缩放由后端线程跟随鼠标完成（光标移出窗口也能连续缩放），
 // 前端只负责"按下时发起、松开时收尾"。
 
+const RESIZE_CURSORS = {
+  n: 'ns-resize', s: 'ns-resize', w: 'ew-resize', e: 'ew-resize',
+  nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize'
+}
+
 function beginPanelOp(mode, axis) {
   const a = api()
   if (!a || !a.begin_panel_drag) return
+  document.documentElement.style.setProperty(
+    '--panel-cursor',
+    mode === 'move' ? 'grabbing' : (RESIZE_CURSORS[axis] || 'nwse-resize')
+  )
   document.documentElement.classList.add('panel-resizing')
   try { a.begin_panel_drag(mode, axis) } catch (err) { /* ignore */ }
 }
@@ -216,7 +234,7 @@ function onHeadDown(e) {
   beginPanelOp('move', '')
 }
 
-/** 按下缩放手柄：dir = e（宽）/ s（高）/ se（自由） */
+/** 按下缩放手柄：dir = n / s / e / w / ne / nw / se / sw */
 function onResizeDown(e, dir) {
   if (e.button !== 0) return
   beginPanelOp('resize', dir)
@@ -480,18 +498,19 @@ onMounted(async () => {
 
 /* ---------- 自由缩放手柄（贴住窗口边缘，超出圆角部分不可见） ---------- */
 .mini-grip { position: absolute; z-index: 5; }
-.mini-grip.e {
-  top: 46px; right: 0; bottom: 14px; width: 6px;
-  cursor: ew-resize;
-}
-.mini-grip.s {
-  left: 14px; right: 14px; bottom: 0; height: 6px;
-  cursor: ns-resize;
-}
-.mini-grip.se {
-  right: 0; bottom: 0; width: 18px; height: 18px;
-  cursor: nwse-resize;
-}
+
+/* 四边：边中段可拉（两端让给角落手柄） */
+.mini-grip.n  { left: 16px; right: 16px; top: 0;    height: 6px; cursor: ns-resize; }
+.mini-grip.s  { left: 16px; right: 16px; bottom: 0; height: 6px; cursor: ns-resize; }
+.mini-grip.w  { top: 48px; bottom: 16px; left: 0;   width: 6px;  cursor: ew-resize; }
+.mini-grip.e  { top: 48px; bottom: 16px; right: 0;  width: 6px;  cursor: ew-resize; }
+
+/* 四角：自由缩放 */
+.mini-grip.nw { left: 0;   top: 0;    width: 14px; height: 14px; cursor: nwse-resize; }
+.mini-grip.ne { right: 0;  top: 0;    width: 14px; height: 14px; cursor: nesw-resize; }
+.mini-grip.sw { left: 0;   bottom: 0; width: 14px; height: 14px; cursor: nesw-resize; }
+.mini-grip.se { right: 0;  bottom: 0; width: 14px; height: 14px; cursor: nwse-resize; }
+
 /* 右下角给一个隐约的斜纹提示，告诉用户这里能拉 */
 .mini-grip.se::after {
   content: '';
@@ -504,11 +523,11 @@ onMounted(async () => {
   transition: opacity .15s ease;
 }
 .mini-grip.se:hover::after { opacity: .95; }
-.mini-grip.e:hover, .mini-grip.s:hover { background: var(--bg-subtle); }
+.mini-grip:hover { background: var(--bg-subtle); }
 
 /* 拖动/缩放期间全局光标，避免掠过其他元素时光标乱跳 */
 :global(html.panel-resizing), :global(html.panel-resizing *) {
-  cursor: grabbing !important;
+  cursor: var(--panel-cursor, grabbing) !important;
   user-select: none !important;
 }
 .mini-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px rgba(0, 180, 42, .15); }
