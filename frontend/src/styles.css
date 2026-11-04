@@ -12,6 +12,7 @@
   --text-dim: #86909c;
   --text-faint: #c0c6cf;
   --primary: #165dff;
+  --primary-deep: #0e46c8;
   --success: #00b42a;
   --danger: #f53f3f;
   --root-head: linear-gradient(180deg, #e8f7ee, #f2fbf5);
@@ -32,6 +33,7 @@ html[data-theme="dark"] {
   --text-dim: #8a8f99;
   --text-faint: #6b7078;
   --primary: #4080ff;
+  --primary-deep: #1f4fb8;
   --success: #23c343;
   --danger: #f76560;
   --root-head: linear-gradient(180deg, #1e3326, #212529);

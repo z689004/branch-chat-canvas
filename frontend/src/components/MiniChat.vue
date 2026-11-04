@@ -307,118 +307,130 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: transparent;
+  /* 与球渐变同色系：Win11 系统圆角裁切与页面圆角之间的细缝不可见 */
+  background: linear-gradient(145deg, var(--primary), var(--primary-deep));
   overflow: hidden;
+  font-family: 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', sans-serif;
 }
 
-/* ---------- 悬浮球 ---------- */
+/* ---------- 悬浮球：App 图标式圆角方形，铺满窗口 ---------- */
 .mini-ball {
-  width: 60px;
-  height: 60px;
-  border-radius: 50%;
+  width: 100%;
+  height: 100%;
+  padding: 0;
   border: none;
+  border-radius: 20px; /* 圆角方形（squircle），与窗口系统圆角自然衔接 */
   cursor: grab;
   color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(145deg, #3d7bff, #2f5fd0);
-  box-shadow: 0 6px 18px rgba(47, 95, 208, .45), 0 0 0 1px rgba(255, 255, 255, .25) inset;
-  transition: transform .16s ease, box-shadow .16s ease;
+  background:
+    radial-gradient(120% 120% at 30% 22%, rgba(255, 255, 255, .32), rgba(255, 255, 255, 0) 46%),
+    linear-gradient(145deg, var(--primary), var(--primary-deep));
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .14) inset;
+  transition: filter .16s ease;
   -webkit-user-select: none;
   user-select: none;
 }
-.mini-ball:hover { transform: scale(1.07); box-shadow: 0 8px 22px rgba(47, 95, 208, .55), 0 0 0 1px rgba(255,255,255,.3) inset; }
-.mini-ball:active { transform: scale(.96); cursor: grabbing; }
-.mini-root.dragging .mini-ball { transform: scale(.98); cursor: grabbing; }
+/* 窗口四角由系统圆角裁切，动画只用亮度反馈（不位移、不缩放） */
+.mini-ball:hover { filter: brightness(1.09); }
+.mini-ball:active { filter: brightness(.94); cursor: grabbing; }
+.mini-root.dragging .mini-ball { filter: brightness(.96); cursor: grabbing; }
+.mini-ball svg { width: 34px; height: 34px; }
 
-/* ---------- 右键菜单：窗口放大后球贴右下角 ---------- */
+/* ---------- 右键菜单：窗口即菜单，圆角浮层 ---------- */
 .mini-root.menu-open {
-  align-items: flex-end;
-  justify-content: flex-end;
-  padding: 12px;
-  box-sizing: border-box;
+  align-items: stretch;
+  justify-content: stretch;
+  background: var(--bg-panel);
 }
+/* 菜单态窗口整体就是菜单面板，球隐藏避免挤压布局 */
+.mini-root.menu-open .mini-ball { display: none; }
 
 .ball-menu {
-  position: absolute;
-  right: 10px;
-  bottom: 88px;
-  width: 188px;
-  padding: 6px;
-  border-radius: 12px;
-  background: #fff;
-  border: 1px solid #e6e9ef;
-  box-shadow: 0 12px 34px rgba(16, 24, 40, .2);
+  width: 100%;
+  height: 100%;
+  padding: 10px;
+  border-radius: 14px;
+  background: var(--bg-panel);
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
   user-select: none;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 .bm-item {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 8px 10px;
+  padding: 9px 10px;
   border: none;
   border-radius: 8px;
   background: transparent;
-  color: #1f2329;
+  color: var(--text);
   font-size: 13px;
   text-align: left;
   cursor: pointer;
   font-family: inherit;
 }
 .bm-item span { font-size: 13px; width: 16px; text-align: center; }
-.bm-item:hover { background: #eef2ff; color: #2f5fd0; }
-.bm-item.danger:hover { background: #ffece8; color: #f53f3f; }
-.bm-sep { height: 1px; background: #eef0f4; margin: 4px 6px; }
+.bm-item:hover { background: var(--bg-subtle); color: var(--primary); }
+.bm-item.danger:hover { background: rgba(245, 63, 63, .1); color: var(--danger); }
+.bm-sep { height: 1px; background: var(--border-soft); margin: 4px 6px; }
 .bm-tip {
-  padding: 4px 10px 2px;
+  margin-top: auto;
+  padding: 6px 8px 2px;
   font-size: 10.5px;
   line-height: 1.6;
-  color: #a5adba;
+  color: var(--text-faint);
 }
 
 .bm-enter-active, .bm-leave-active { transition: opacity .12s ease, transform .12s ease; }
 .bm-enter-from, .bm-leave-to { opacity: 0; transform: translateY(6px); }
 
-/* ---------- 展开面板 ---------- */
+/* ---------- 展开面板：与应用同色系，圆角浮层 ---------- */
 .mini-root.expanded {
-  background: #fff;
-  border-radius: 14px;
   align-items: stretch;
   justify-content: flex-start;
-  box-shadow: 0 10px 30px rgba(16, 24, 40, .16);
-  overflow: hidden;
+  background: var(--bg-panel);
   padding: 0;
 }
-.mini-panel { display: flex; flex-direction: column; width: 100%; height: 100%; background: #fff; }
+.mini-panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  background: var(--bg-panel);
+  border-radius: 14px;
+  overflow: hidden;
+}
 
 .mini-head {
   display: flex; align-items: center; gap: 8px;
   padding: 12px 14px;
-  border-bottom: 1px solid #eef0f4;
-  background: #fafbfc;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-sub);
   flex-shrink: 0;
 }
-.mini-dot { width: 8px; height: 8px; border-radius: 50%; background: #00b42a; box-shadow: 0 0 0 3px rgba(0,180,42,.15); }
-.mini-head b { font-size: 13px; color: #1f2329; font-weight: 600; }
+.mini-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px rgba(0, 180, 42, .15); }
+.mini-head b { font-size: 13px; color: var(--text); font-weight: 600; }
 .mini-tree {
-  font-size: 11px; color: #8a94a6; max-width: 130px;
+  font-size: 11px; color: var(--text-dim); max-width: 130px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .mini-ops { margin-left: auto; display: flex; gap: 4px; }
 .mini-ops button {
   width: 24px; height: 24px; border: none; border-radius: 6px; cursor: pointer;
-  background: transparent; color: #6b7280; font-size: 14px; line-height: 1;
+  background: transparent; color: var(--text-dim); font-size: 14px; line-height: 1;
 }
-.mini-ops button:hover { background: #eef2ff; color: #2f5fd0; }
+.mini-ops button:hover { background: var(--bg-subtle); color: var(--primary); }
 
-.mini-list { flex: 1; overflow-y: auto; padding: 14px; background: #fff; }
-.mini-empty { color: #8a94a6; font-size: 12.5px; text-align: center; margin-top: 60px; line-height: 1.9; }
-.mini-empty .mini-sub { font-size: 11.5px; color: #b0b7c3; }
+.mini-list { flex: 1; overflow-y: auto; padding: 14px; background: var(--bg-panel); }
+.mini-empty { color: var(--text-dim); font-size: 12.5px; text-align: center; margin-top: 60px; line-height: 1.9; }
+.mini-empty .mini-sub { font-size: 11.5px; color: var(--text-faint); }
 
 .mini-msg { margin-bottom: 12px; display: flex; }
 .mini-msg.user { justify-content: flex-end; }
@@ -430,11 +442,11 @@ onMounted(async () => {
   line-height: 1.7;
   word-break: break-word;
 }
-.mini-msg.user .mini-bubble { background: #2f5fd0; color: #fff; border-bottom-right-radius: 3px; }
-.mini-msg.assistant .mini-bubble { background: #f5f6f8; color: #1f2329; border-bottom-left-radius: 3px; }
+.mini-msg.user .mini-bubble { background: var(--primary); color: #fff; border-bottom-right-radius: 3px; }
+.mini-msg.assistant .mini-bubble { background: var(--bg-subtle); color: var(--text); border-bottom-left-radius: 3px; }
 .mini-bubble :deep(p) { margin: 0 0 8px; }
 .mini-bubble :deep(p:last-child) { margin-bottom: 0; }
-.mini-bubble :deep(code) { background: rgba(0,0,0,.06); padding: 1px 4px; border-radius: 4px; font-size: 12px; }
+.mini-bubble :deep(code) { background: rgba(0, 0, 0, .07); padding: 1px 4px; border-radius: 4px; font-size: 12px; }
 .mini-bubble :deep(pre) { background: #1f2329; color: #e6edf3; padding: 10px; border-radius: 8px; overflow-x: auto; font-size: 12px; }
 .mini-bubble :deep(pre code) { background: none; color: inherit; padding: 0; }
 .mini-bubble :deep(ul), .mini-bubble :deep(ol) { padding-left: 18px; margin: 6px 0; }
@@ -444,19 +456,21 @@ onMounted(async () => {
 .mini-input {
   display: flex; gap: 8px; align-items: flex-end;
   padding: 10px 12px;
-  border-top: 1px solid #eef0f4;
-  background: #fafbfc;
+  border-top: 1px solid var(--border-soft);
+  background: var(--bg-sub);
   flex-shrink: 0;
 }
 .mini-input textarea {
-  flex: 1; resize: none; border: 1px solid #e3e6ec; border-radius: 8px;
+  flex: 1; resize: none;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg-panel); color: var(--text);
   padding: 8px 10px; font-size: 13px; line-height: 1.5; font-family: inherit;
   outline: none; max-height: 90px;
 }
-.mini-input textarea:focus { border-color: #2f5fd0; box-shadow: 0 0 0 3px rgba(47,95,208,.12); }
+.mini-input textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(22, 93, 255, .12); }
 .mini-send {
   height: 36px; padding: 0 14px; border: none; border-radius: 8px;
-  background: #2f5fd0; color: #fff; font-size: 13px; cursor: pointer;
+  background: var(--primary); color: #fff; font-size: 13px; cursor: pointer;
 }
-.mini-send:disabled { background: #c8d3e8; cursor: not-allowed; }
+.mini-send:disabled { background: var(--text-faint); cursor: not-allowed; }
 </style>

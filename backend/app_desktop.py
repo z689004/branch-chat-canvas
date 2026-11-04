@@ -378,6 +378,7 @@ class NativeApi:
         try:
             self._ball.resize(w, h)
             self._ball.move(int(x), int(y))
+            self._ensure_round_corners()
         except Exception:  # noqa: BLE001
             log.exception("展开悬浮球菜单失败")
             return {"ok": False}
@@ -392,6 +393,7 @@ class NativeApi:
             self._ball.resize(BALL_SIZE, BALL_SIZE)
             x, y = initial_ball_pos()
             self._ball.move(int(x), int(y))
+            self._ensure_round_corners()
         except Exception:  # noqa: BLE001
             log.exception("收起伏悬浮球失败")
             return {"ok": False}
@@ -418,10 +420,12 @@ class NativeApi:
                 y = max(work.top, min(y, work.bottom - h))
                 self._ball.resize(w, h)
                 self._ball.move(int(x), int(y))
+                self._ensure_round_corners()
             else:
                 self._ball.resize(BALL_SIZE, BALL_SIZE)
                 x, y = initial_ball_pos()
                 self._ball.move(int(x), int(y))
+                self._ensure_round_corners()
         except Exception:  # noqa: BLE001
             log.exception("调整悬浮窗尺寸失败")
             return False
@@ -507,6 +511,29 @@ class NativeApi:
         u = _user32()
         return bool(u.IsWindowVisible(hwnd)) and not u.IsIconic(hwnd)
 
+    # ---------------- 窗口形状（Win11 原生圆角，去掉不透明底色方块） ----------------
+    # pywebview 的 transparent 在 Windows/WebView2 下不生效，窗口四角会露出
+    # 不透明底色；SetWindowRgn / LWA_COLORKEY 在 WebView2 的 DWM 合成下同样
+    # 失效。最终方案：App 图标式的圆角方形悬浮球 + DWMWA_WINDOW_CORNER_
+    # PREFERENCE 系统级圆角（Win11 对所有应用通用，WebView2 内容也会被裁），
+    # 窗口底色与球/面板同色，肉眼无缝。
+
+    def _ensure_round_corners(self) -> None:
+        """给悬浮球窗口应用 Win11 系统圆角（幂等，resize/move 不影响）。"""
+        hwnd = find_window(BALL_TITLE)
+        if not hwnd:
+            return
+        try:
+            dwm = ctypes.windll.dwmapi
+            DWMWA_WINDOW_CORNER_PREFERENCE = 33
+            DWMWCP_ROUND = 2  # 系统默认圆角（Win10 不支持则静默保持直角）
+            pref = ctypes.c_int(DWMWCP_ROUND)
+            dwm.DwmSetWindowAttribute(
+                ctypes.wintypes.HWND(hwnd), DWMWA_WINDOW_CORNER_PREFERENCE,
+                ctypes.byref(pref), ctypes.sizeof(pref))
+        except Exception:  # noqa: BLE001
+            log.exception("应用悬浮球窗口圆角失败")
+
     def set_desktop_config(self, patch: dict = None) -> dict:  # noqa: RUF013
         patch = patch or {}
         if "showBall" in patch:
@@ -534,6 +561,7 @@ class NativeApi:
                     bx, by = self._ball_pos()
                     self._ball.move(int(bx), int(by))
                     self._ball.show()
+                    self._ensure_round_corners()
                 else:
                     self._ball.hide()
                 log.info("悬浮球已%s", "显示" if visible else "隐藏")
@@ -558,6 +586,7 @@ class NativeApi:
                 self._ball.resize(BALL_SIZE, BALL_SIZE)
                 x, y = initial_ball_pos()
                 self._ball.move(int(x), int(y))
+                self._ensure_round_corners()
             except Exception:  # noqa: BLE001
                 log.exception("重置悬浮球位置失败")
                 return {"ok": False}
@@ -642,7 +671,11 @@ def main() -> None:
     )
     api.attach(win)
 
-    # 悬浮球：无边框、置顶、透明，位置取上次保存值（默认右下角）
+    # 悬浮球：无边框、置顶，位置取上次保存值（默认右下角）。
+    # 注意：不能用 transparent=True（pywebview 该路径在 WebView2 下渲染异常，
+    # 四角露出黑色方块）；SetWindowRgn / LWA_COLORKEY 也均被 WebView2 的
+    # DWM 合成绕过。最终方案：App 图标式圆角方形球 + Win11 系统圆角
+    # （_ensure_round_corners），窗口底色与球同色系，视觉无缝。
     ball_x, ball_y = initial_ball_pos()
     ball = webview.create_window(
         BALL_TITLE,
@@ -653,7 +686,7 @@ def main() -> None:
         y=ball_y,
         frameless=True,
         on_top=True,
-        transparent=True,
+        background_color="#2F5FD0",  # 与球渐变主色一致，加载瞬间与四角无缝
         resizable=False,
         easy_drag=False,
         shadow=False,
@@ -674,6 +707,10 @@ def main() -> None:
             log.info("悬浮球尺寸/位置已校正为 %dx%d @ (%d, %d)", BALL_SIZE, BALL_SIZE, bx, by)
         except Exception:  # noqa: BLE001
             log.exception("校正悬浮球失败")
+        try:
+            api._ensure_round_corners()  # Win11 系统圆角，窗口与球视觉无缝
+        except Exception:  # noqa: BLE001
+            log.exception("应用悬浮球色键透明失败")
         if not DESKTOP_CFG.get("showBall", True):
             try:
                 ball.hide()
