@@ -1275,7 +1275,29 @@ def main() -> None:
 
     # 兜底：允许 WebView2 自带下载 UI（万一有网页式下载场景）
     webview.settings["ALLOW_DOWNLOADS"] = True
-    webview.start(_after_start, debug=os.getenv("BCC_DEBUG") == "1")
+
+    # 仅调试/自动化测试用：设了环境变量才开 CDP 端口，正常使用绝不开
+    rdp = os.getenv("BCC_REMOTE_DEBUG_PORT")
+    if rdp:
+        try:
+            webview.settings["REMOTE_DEBUGGING_PORT"] = int(rdp)
+        except ValueError:
+            log.warning("BCC_REMOTE_DEBUG_PORT 非法：%s", rdp)
+
+    # 关键：pywebview 默认 private_mode=True，WebView2 会跑在 InPrivate 模式，
+    # 窗口关闭时 clear_user_data() 直接把整个用户数据目录 rmtree 掉——
+    # 存在 localStorage 里的主题 / 画布背景 / 配色 / 笔记每次重启全丢。
+    # 关闭隐私模式并把 profile 固定到数据目录，配置才能跨启动保留
+    # （顺带：profile 跟着 data/ 走，整个文件夹拷走时笔记和外观设置一起迁移）。
+    profile_dir = dpath / "webview"
+    start_kwargs = {"debug": os.getenv("BCC_DEBUG") == "1", "private_mode": False}
+    try:
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        start_kwargs["storage_path"] = str(profile_dir)
+    except Exception:  # noqa: BLE001
+        # 数据目录不可写时退化为系统默认保留目录：设置仍持久，只是不跟 data/ 迁移
+        log.exception("创建 WebView2 数据目录失败，回退默认目录：%s", profile_dir)
+    webview.start(_after_start, **start_kwargs)
     # 窗口关闭后退出：先停后端，再结束进程
     log.info("窗口关闭，退出")
     tray.stop()
