@@ -49,7 +49,7 @@
 ### 方式一：桌面版 exe（Windows，双击即用，无需任何环境）
 
 ```bash
-build_exe.bat          # 打包一次，产出 dist-exe\BranchChatCanvas.exe（约 19MB）
+build_exe.bat          # 打包一次，产出 dist-exe\BranchChatCanvas.exe（约 28MB）
 ```
 
 双击 `BranchChatCanvas.exe` → 等待 5~10 秒 → **打开独立应用窗口**（基于系统 WebView2 内核渲染，
