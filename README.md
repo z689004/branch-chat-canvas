@@ -6,11 +6,21 @@
 线性聊天窗口里，问题越聊越偏、思路汇不拢；这里每个想法都是画布上的一个节点，
 哪条线索值得深入就分叉哪条，哪条不需要就整枝剪掉。
 
-**两种用法，按需选择：**
+## 📥 直接下载（Windows，双击即用）
+
+不需要安装任何环境，下载后双击运行，等 5~10 秒解包即可：
+
+- **[GitHub Releases 下载 BranchChatCanvas.exe](https://github.com/z689004/branch-chat-canvas/releases/latest)**（约 28 MB）
+- **[Gitee 发行版下载 BranchChatCanvas.exe](https://gitee.com/Zhi-JunLiu/branch-chat-canvas/releases/latest)**（国内访问更快）
+
+不填 API Key 也能进演示模式先玩起来；数据全部存本地 `data/` 目录。
+未签名程序可能被 Defender 误报，选「仍要运行」即可。
+
+**三种用法，按需选择：**
 
 | 运行方式 | 适合场景 | 依赖 |
 |---|---|---|
-| 🖥️ **桌面软件（.exe）** | 双击即用，无需安装 Python/Node，可拷给别人 | 无（打包后单文件） |
+| 🖥️ **桌面软件（.exe）** | 双击即用，无需安装 Python/Node，可拷给别人 | 无（[直接下载](https://github.com/z689004/branch-chat-canvas/releases/latest)，或 `build_exe.bat` 自行打包） |
 | ⚡ **纯前端单文件**（`dist-web/index.html`） | 双击即用、发给别人、离线演示，数据存浏览器 | 无 |
 | 🌐 **FastAPI 完整版** | 数据落盘、多画布管理、局域网/服务器共享 | Python 3.9+ / Node 18+（或 Docker） |
 
