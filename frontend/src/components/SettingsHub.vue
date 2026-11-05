@@ -32,6 +32,11 @@ let hideTimer = null
 function openPop() {
   clearTimeout(hideTimer)
   if (pop.visible) return
+  // 有对话框打开时不再弹面板：本组件的对话框在工具栏层叠上下文内，
+  // Chrome 在面板卸载后会向 hub 补发合成 mouseenter，导致面板「关了又弹开」压住对话框
+  const openOverlay = [...document.querySelectorAll('.el-overlay')]
+    .find((o) => getComputedStyle(o).display !== 'none')
+  if (openOverlay) return
   const r = btnRef.value.getBoundingClientRect()
   pop.right = Math.max(8, window.innerWidth - r.right)
   pop.top = r.bottom + 6
@@ -249,7 +254,9 @@ function resetColors() {
     </Teleport>
 
     <!-- 主题 / 画布背景 对话框 -->
-    <el-dialog v-model="themeDialog" title="🎨 主题与画布背景" width="560px">
+    <!-- append-to-body：逃出 .toolbar 的层叠上下文（flex 子项 z-index:10），
+         否则对话框+遮罩被整体压在低层，遮罩挡不住工具栏、面板也会盖在对话框上 -->
+    <el-dialog v-model="themeDialog" title="🎨 主题与画布背景" width="560px" append-to-body>
       <div class="sh-dialog-sec">
         <div class="sh-dialog-title">主题</div>
         <el-radio-group :model-value="theme" @change="(t) => emit('set-theme', t)">
