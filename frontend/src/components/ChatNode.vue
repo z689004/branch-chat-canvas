@@ -6,7 +6,11 @@ import MarkdownIt from 'markdown-it'
 import { useTreeStore } from '../store/tree'
 import { useNotesStore } from '../store/notes'
 
-const props = defineProps({ nodeId: { type: String, required: true } })
+const props = defineProps({
+  nodeId: { type: String, required: true },
+  /** 是否为悬浮球「快速对话」的承载节点（专属画布的根节点） */
+  quickChat: { type: Boolean, default: false }
+})
 const emit = defineEmits(['menu', 'child-created'])
 const store = useTreeStore()
 const notesStore = useNotesStore()
@@ -228,7 +232,8 @@ watch(
       resizing,
       'is-empty': isEmpty && !node.isCollapsed,
       'is-error': status.key === 'error',
-      'is-root': isRoot
+      'is-root': isRoot,
+      'is-quick': quickChat
     }"
     :style="{ width: cardSize.w + 'px', height: node.isCollapsed ? 'auto' : cardSize.h + 'px' }"
     @contextmenu.prevent="onContextMenu"
@@ -241,6 +246,13 @@ watch(
     >
       <span class="node-icon">{{ node.parentId ? '🌿' : '🌱' }}</span>
       <span v-if="isRoot" class="node-badge badge-root">起始</span>
+      <el-tooltip
+        v-if="quickChat"
+        content="悬浮球「快速对话」的内容就记在这个节点上，两处实时共用同一段对话"
+        placement="top"
+      >
+        <span class="node-badge badge-quick">⚡ 快速对话</span>
+      </el-tooltip>
       <template v-if="editing">
         <input
           v-model="titleDraft"

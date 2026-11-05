@@ -1,5 +1,5 @@
 <script setup>
-import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { VueFlow, useVueFlow } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { MiniMap } from '@vue-flow/minimap'
@@ -7,7 +7,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useTreeStore } from './store/tree'
 import {
   exportTree, importTree, getLlmConfig, updateLlmConfig, testLlm,
-  saveLlmProfile, deleteLlmProfile, activateLlmProfile
+  saveLlmProfile, deleteLlmProfile, activateLlmProfile,
+  getMiniTreeApi, setMiniTreeApi, getTree
 } from './api'
 import ChatNode from './components/ChatNode.vue'
 import NotePanel from './components/NotePanel.vue'
@@ -19,6 +20,45 @@ const store = useTreeStore()
 const notes = useNotesStore()
 const appearance = useAppearanceStore()
 const { fitView, viewport, zoomIn, zoomOut, getSelectedNodes } = useVueFlow()
+
+/* ---------- 快速对话载体标识 ----------
+ * 悬浮球的「快速对话」不是挂在当前选中的卡片上，而是固定写入一块专属画布
+ * （首次使用自动创建，标题「悬浮速记」）的根节点。这里把那个画布/节点标出来，
+ * 免得主界面里一堆长得一样的卡片分不清哪张是快速对话。
+ * 数据源走后端 meta（主窗口与悬浮球窗口的 localStorage 可能隔离）。 */
+const miniTreeId = ref('')
+
+async function refreshMiniTree() {
+  try {
+    const r = await getMiniTreeApi()
+    let tid = (r && r.treeId) || ''
+    if (!tid) {
+      // 后端 meta 丢了（重装 / 升级 / 曾用独立数据目录）时回落到本地存储，
+      // 并回写后端，避免下次又标不出来
+      const local = localStorage.getItem('bcc:miniTreeId') || ''
+      if (local) {
+        try {
+          await getTree(local)
+          tid = local
+          setMiniTreeApi(local).catch(() => {})
+        } catch (e) {
+          localStorage.removeItem('bcc:miniTreeId') // 画布已不存在，清掉失效指针
+        }
+      }
+    }
+    miniTreeId.value = tid
+  } catch (e) { /* 后端未就绪时忽略 */ }
+}
+
+/** 当前画布是否为快速对话画布，且该节点正是它的承载节点（根节点） */
+function isQuickChatNode(nodeId) {
+  if (!miniTreeId.value || miniTreeId.value !== store.treeId) return false
+  const n = store.nodeMap[nodeId]
+  return !!n && !n.parentId
+}
+
+// 切换画布时重新确认归属（快速对话可能在别处新建了画布）
+watch(() => store.treeId, () => refreshMiniTree())
 
 /** 适应视图：缩放到刚好装下全部节点，但最多放大到 100%，避免小画布被拉得过大 */
 const fitAll = (padding = 0.25, duration = 300) =>
@@ -152,6 +192,16 @@ function quickCollect() {
 // ---------- 画布操作 ----------
 async function newTree() {  try { await store.newTree(); ElMessage.success('新画布已创建'); nextTick(() => fitAll(0.3, 300)) }
   catch (e) { ElMessage.error(e.message) }
+}
+
+/** 空画布（对话被全部删除）后补一张根会话，不用新建画布、不丢画布名 */
+async function createRootNode() {
+  try {
+    const root = await store.ensureRoot()
+    if (!root) return
+    ElMessage.success('已新建一个对话')
+    nextTick(() => fitAll(0.3, 300))
+  } catch (e) { ElMessage.error(e.message) }
 }
 async function switchTree(treeId) {
   try {
@@ -804,10 +854,15 @@ onMounted(() => {
   refreshDesktop()
   setTimeout(refreshDesktop, 800)
   refreshLlm()
+  // 快速对话的归属画布：挂载时取一次，窗口重新获得焦点时再校正
+  // （悬浮球里首次使用会新建画布，切回主窗口时标识要跟上）
+  refreshMiniTree()
+  window.addEventListener('focus', refreshMiniTree)
   // 悬浮球面板点击「在主窗口打开」时，由桌面壳调用此方法切换画布
   window.__openTreeFromMini = async (treeId) => {
     try {
       await store.loadTree(treeId)
+      refreshMiniTree()
       nextTick(() => fitAll(0.25, 400))
     } catch (e) { /* ignore */ }
   }
@@ -831,6 +886,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('keyup', onKeyup)
   document.removeEventListener('mousedown', onDocMouseDown)
   window.removeEventListener('pywebviewready', refreshDesktop)
+  window.removeEventListener('focus', refreshMiniTree)
   delete window.__openTreeFromMini
   delete window.__onDesktopCfgChanged
   delete window.__openBallSettings
@@ -1024,6 +1080,7 @@ onBeforeUnmount(() => {
         <template #node-chat="nodeProps">
           <ChatNode
             :node-id="nodeProps.id"
+            :quick-chat="isQuickChatNode(nodeProps.id)"
             @menu="openNodeMenu"
             @child-created="() => { if (autoTidy) store.tidyLayout(false); nextTick(() => fitAll(0.25, 300)) }"
           />
@@ -1047,6 +1104,17 @@ onBeforeUnmount(() => {
             <el-button text size="small" @click="newTree">或先创建一个空白画布</el-button>
           </div>
           <div class="welcome-tip">改动会自动保存 · 右键节点可快速新建分支 / 复制 / 折叠 / 导出</div>
+        </div>
+      </div>
+
+      <!-- 对话被全部删除后的空画布：给一个明确出口，否则只能删画布重来 -->
+      <div v-if="store.treeId && !store.nodes.length" class="empty-canvas">
+        <div class="empty-card">
+          <div class="empty-icon">🌱</div>
+          <h3>这块画布空了</h3>
+          <p>对话卡片都删掉了。新建一个对话就能接着用，画布本身和名字都会保留。</p>
+          <el-button type="primary" @click="createRootNode">＋ 新建一个对话</el-button>
+          <button class="empty-link" @click="newTree">或者另开一块空白画布</button>
         </div>
       </div>
 

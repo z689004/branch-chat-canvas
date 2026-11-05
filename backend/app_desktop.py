@@ -888,8 +888,12 @@ class NativeApi:
         try:
             dwm = ctypes.windll.dwmapi
             DWMWA_WINDOW_CORNER_PREFERENCE = 33
-            DWMWCP_ROUND = 2  # 系统默认圆角（Win10 不支持则静默保持直角）
-            pref = ctypes.c_int(DWMWCP_ROUND)
+            # ROUNDSMALL（小圆角）：实测系统阴影只有 ROUND 的约 1/3——
+            # DWM 没有单独调阴影浓淡的 API，圆角和阴影是绑定的；小圆角
+            # 自带小阴影，球的视觉圆润由 CSS border-radius 和 squircle
+            # 图标保证，窗口层收窄几乎无感（tools/probe_shadow.py 实测）。
+            DWMWCP_ROUNDSMALL = 3
+            pref = ctypes.c_int(DWMWCP_ROUNDSMALL)
             dwm.DwmSetWindowAttribute(
                 ctypes.wintypes.HWND(hwnd), DWMWA_WINDOW_CORNER_PREFERENCE,
                 ctypes.byref(pref), ctypes.sizeof(pref))

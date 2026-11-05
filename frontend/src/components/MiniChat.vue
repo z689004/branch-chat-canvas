@@ -40,18 +40,46 @@
         </div>
       </header>
 
-      <div ref="listEl" class="mini-list">
+      <!-- 处在子分支时给一条可回溯的路径条 -->
+      <div v-if="!cur.isRoot" class="mini-crumb">
+        <span class="mini-crumb-t" :title="cur.title">🌿 {{ cur.title }}</span>
+        <button @click="goRoot">回到主会话</button>
+      </div>
+
+      <div ref="listEl" class="mini-list" @mouseup="onSelectEnd" @scroll="hideSelPop">
         <div v-if="!messages.length" class="mini-empty">
-          <p>💬 直接提问，AI 会接着这个画布继续聊</p>
-          <p class="mini-sub">内容会保存到画布「{{ treeTitle || '悬浮速记' }}」</p>
+          <template v-if="!cur.isRoot">
+            <p>🌿 新分支已建立</p>
+            <p v-if="cur.ctx" class="mini-quote">{{ cur.ctx }}</p>
+            <p class="mini-sub">{{ cur.mode === 'full' ? '已继承原会话的完整对话，直接提问即可' : 'AI 会以这段选中的内容为上下文回答' }}</p>
+          </template>
+          <template v-else>
+            <p>💬 直接提问，AI 会接着这个画布继续聊</p>
+            <p class="mini-sub">选中文字可以生成子分支</p>
+          </template>
         </div>
         <div v-for="(m, i) in messages" :key="i" class="mini-msg" :class="m.role">
           <div class="mini-bubble" v-html="renderMd(m.content) || (m.role === 'assistant' && sending && i === messages.length - 1 ? '<span class=typing>▍</span>' : '')"></div>
         </div>
       </div>
 
+      <!-- 划选文字后浮出的建分支入口（mousedown.prevent 保住选区，否则点击即丢失） -->
+      <transition name="sp">
+        <div
+          v-if="selPop.visible"
+          class="mini-sel-pop"
+          :style="{ left: selPop.x + 'px', top: selPop.y + 'px' }"
+          @mousedown.prevent
+          @contextmenu.prevent.stop
+        >
+          <button class="sp-btn" title="仅用选中片段作为上下文" @click="makeBranch('simple')">⚡ 精简</button>
+          <button class="sp-btn" title="继承当前会话的全部对话" @click="makeBranch('full')">📚 完整</button>
+        </div>
+      </transition>
+
       <div class="mini-input">
         <textarea
+          ref="inputEl"
           v-model="draft"
           rows="2"
           placeholder="输入问题，Enter 发送（Shift+Enter 换行）"
@@ -82,7 +110,7 @@
 <script setup>
 import { ref, reactive, nextTick, onMounted } from 'vue'
 import MarkdownIt from 'markdown-it'
-import { createTree, getTree, sendQuestionStream, getMiniTreeApi, setMiniTreeApi } from '../api'
+import { createTree, getTree, sendQuestionStream, getMiniTreeApi, setMiniTreeApi, ensureRootNodeApi, createChildNode } from '../api'
 // 球图标走源码打包（带哈希入 dist/assets），不再依赖 public/ —— 避免被构建清理误删
 import ballIcon from '../assets/icon-ball.png'
 
@@ -98,6 +126,8 @@ const ballBgStyle = {
 }
 
 const MINI_KEY = 'bcc:miniTreeId'
+// 当前停在哪个节点（划选建分支后会停到子分支上，重启也接着这条分支聊）
+const MINI_NODE_KEY = 'bcc:miniNodeId'
 const MINI_TITLE = '悬浮速记'
 // 与后端 MENU_SIZE 保持一致：右键菜单展开时需要的窗口尺寸
 const MENU_W = 212
@@ -110,9 +140,15 @@ const sending = ref(false)
 const draft = ref('')
 const messages = ref([])
 const listEl = ref(null)
+const inputEl = ref(null)
 const treeId = ref('')
 const treeTitle = ref('')
+// 当前会话节点（可能是根会话，也可能是划选生成的子分支）
+const cur = ref({ isRoot: true, title: '', ctx: '', mode: 'simple' })
+// 划选浮层
+const selPop = reactive({ visible: false, x: 0, y: 0, text: '' })
 let nodeId = ''
+let lastTree = null
 
 const api = () => (window.pywebview && window.pywebview.api) || null
 
@@ -256,12 +292,17 @@ async function quickChat() {
   expanded.value = true
   const a = api()
   if (a && a.toggle_mini) await a.toggle_mini(true)
-  try { await ensureTree() } catch (e) { /* 后端未就绪 */ }
+  // 关键：清掉点球时留下的光标/选区残留——
+  // 否则 Chromium 会把下一次拖选挂在不可选区里的旧锚点上，表现为"怎么拖都选不中"
+  try { window.getSelection()?.removeAllRanges() } catch (e) { /* ignore */ }
+  // 打开面板即校正：用户可能在主界面把速记画布删了
+  try { await ensureAlive(true) } catch (e) { /* 后端未就绪 */ }
   scrollBottom()
 }
 
 async function menuOpenMain() {
   await closeMenu()
+  try { await ensureAlive() } catch (e) { /* ignore */ }
   const a = api()
   if (a && a.open_main) await a.open_main(treeId.value || '')
 }
@@ -286,31 +327,56 @@ async function collapse() {
 }
 
 async function openMain() {
+  try { await ensureAlive() } catch (e) { /* ignore */ }
   const a = api()
   if (a && a.open_main) await a.open_main(treeId.value)
   await collapse()
 }
 
+/** 绑定画布；画布还在但会话节点被删光时补一个空白根节点
+ *  （快速对话以根节点为对话载体，节点没了就发不出消息）
+ *  返回 true 表示补过节点 */
+async function bindOrRepair(tree) {
+  const list = tree.nodeList || []
+  if (list.some((n) => !n.parentId)) {
+    bindTree(tree)
+    return false
+  }
+  try {
+    const fixed = await ensureRootNodeApi(tree.treeId)
+    bindTree(fixed)
+    return true
+  } catch (e) {
+    bindTree(tree) // 补不上就按原样绑定，发送时会给出提示
+    return false
+  }
+}
+
 /** 取用/创建「悬浮速记」画布，并取它的根节点作为对话载体
  *  查找顺序：本地存储 → 后端口径（悬浮球窗口与主窗口存储可能隔离，重启后读不到）→ 新建
- *  这样每次启动复用同一块画布，不会每次开程序都多出一个空白画布 */
-async function ensureTree() {
+ *  这样每次启动复用同一块画布，不会每次开程序都多出一个空白画布
+ *  force=true 时丢弃当前绑定重新走一遍（画布被删后自愈用） */
+async function ensureTree(force = false) {
+  if (force) resetTree()
   if (treeId.value && nodeId) return
   const id = localStorage.getItem(MINI_KEY) || ''
   if (id) {
     try {
       const t = await getTree(id)
       localStorage.setItem(MINI_KEY, t.treeId)
-      bindTree(t)
+      await bindOrRepair(t)
       return
-    } catch (e) { /* 画布已被删除，继续往下找 */ }
+    } catch (e) {
+      // 只在「画布确实不存在」时作废指针；后端暂时不可用不要误删
+      if (isMissingTree(e)) localStorage.removeItem(MINI_KEY)
+    }
   }
   try {
     const bound = await getMiniTreeApi()
     if (bound && bound.treeId) {
       const t = await getTree(bound.treeId)
       localStorage.setItem(MINI_KEY, t.treeId)
-      bindTree(t)
+      await bindOrRepair(t)
       return
     }
   } catch (e) { /* 后端未就绪时忽略 */ }
@@ -320,44 +386,255 @@ async function ensureTree() {
   bindTree(created)
 }
 
-function bindTree(tree) {
+/** 后端在画布不存在时抛的固定文案（detail="对话树不存在"） */
+const isMissingTree = (e) => /对话树不存在|画布不存在/.test((e && e.message) || '')
+/** 画布还在、只是会话节点被删（detail="节点不存在"）——要和画布丢失分开处理 */
+const isMissingNode = (e) => /节点不存在/.test((e && e.message) || '')
+
+let lastCheckAt = 0
+
+/** 清空当前绑定（不删后端数据），让 ensureTree 重新挑一块画布 */
+function resetTree() {
+  treeId.value = ''
+  treeTitle.value = ''
+  nodeId = ''
+  lastTree = null
+  cur.value = { isRoot: true, title: '', ctx: '', mode: 'simple' }
+  messages.value = []
+  lastCheckAt = 0
+  localStorage.removeItem(MINI_NODE_KEY)
+  hideSelPop()
+}
+
+/** 发消息 / 打开面板前确认画布还在。
+ *  在软件里手动删掉速记画布后，旧 treeId 会一直报「对话树不存在」，
+ *  这里检测到失效就自动新建一块，让快速对话始终可用。 */
+const STALE_NOTICE = '⚠️ 原来的速记会话已被删除，已自动新建一个，直接提问即可。'
+
+async function ensureAlive(force = false) {
+  // 绑定已经不完整（画布或节点被删）→ 自愈，并给一句说明
+  if (!treeId.value || !nodeId) {
+    const hadBinding = !!(treeId.value || localStorage.getItem(MINI_KEY))
+    await ensureTree(true)
+    if (hadBinding && nodeId) messages.value = [{ role: 'assistant', content: STALE_NOTICE }]
+    return
+  }
+  if (!force && Date.now() - lastCheckAt < 1200) return // 连续操作只校验一次
+  lastCheckAt = Date.now()
+  try {
+    const t = await getTree(treeId.value)
+    // 顺带同步主窗口那边新增的内容；会话被删光时这里会自动补一个根节点
+    const repaired = await bindOrRepair(t)
+    if (repaired) messages.value = [{ role: 'assistant', content: STALE_NOTICE }]
+  } catch (e) {
+    if (!isMissingTree(e)) return // 网络/后端异常：保持原样，交给发送流程报错
+    resetTree()
+    await ensureTree(true)
+    if (nodeId) messages.value = [{ role: 'assistant', content: STALE_NOTICE }]
+  }
+}
+
+/** 绑定画布，并尽量停在「当前节点」上
+ *  —— 划选生成子分支后，后续的 ensureAlive 不能把会话冲回根节点
+ *  preferId: 指定要停的节点（切到新分支 / 回到主会话时用） */
+function bindTree(tree, preferId = '') {
+  lastTree = tree
   treeId.value = tree.treeId
   treeTitle.value = tree.title
-  const root = (tree.nodeList || []).find((n) => !n.parentId) || (tree.nodeList || [])[0]
-  nodeId = root ? root.nodeId : ''
-  messages.value = (root && root.messages ? root.messages : []).map((m) => ({
+  const list = tree.nodeList || []
+  const want = preferId || nodeId || localStorage.getItem(MINI_NODE_KEY) || ''
+  const target = list.find((n) => n.nodeId === want)
+    || list.find((n) => !n.parentId)
+    || list[0]
+  nodeId = target ? target.nodeId : ''
+  if (nodeId) localStorage.setItem(MINI_NODE_KEY, nodeId)
+  cur.value = target
+    ? {
+        isRoot: !target.parentId,
+        title: target.title || '未命名会话',
+        ctx: target.selectedContext || '',
+        mode: target.contextMode || 'simple'
+      }
+    : { isRoot: true, title: '', ctx: '', mode: 'simple' }
+  messages.value = (target && target.messages ? target.messages : []).map((m) => ({
     role: m.role, content: m.content
   }))
+  selPop.visible = false
+}
+
+// ---------------- 划选文字 → 生成子分支 ----------------
+
+const hideSelPop = () => { selPop.visible = false }
+
+/** 松手后看有没有选中对话内容；有就给「精简 / 完整」两个建分支入口 */
+function onSelectEnd(e) {
+  if (e.target.closest('.mini-sel-pop')) return
+  nextTick(() => {
+    const sel = window.getSelection()
+    const text = sel ? sel.toString().trim() : ''
+    if (!text || text.length < 4) { hideSelPop(); return }
+    const anchor = sel.anchorNode
+    const el = anchor && (anchor.nodeType === 1 ? anchor : anchor.parentElement)
+    if (!el || !el.closest('.mini-bubble')) { hideSelPop(); return } // 只在对话气泡里生效
+    const rect = sel.getRangeAt(0).getBoundingClientRect()
+    const W = 168
+    const H = 32
+    selPop.text = text
+    selPop.x = Math.max(8, Math.min(rect.left + rect.width / 2 - W / 2, window.innerWidth - W - 8))
+    // 优先显示在选区上方，放不下就落回下方
+    selPop.y = rect.top - H - 8 >= 6
+      ? rect.top - H - 8
+      : Math.min(rect.bottom + 8, window.innerHeight - H - 6)
+    selPop.visible = true
+  })
+}
+
+/** 以选中片段为上下文建子分支，并把快速对话切到这条分支上 */
+async function makeBranch(mode) {
+  const text = selPop.text
+  if (!text || !nodeId) return
+  selPop.visible = false
+  window.getSelection()?.removeAllRanges()
+  const parentId = nodeId
+  try {
+    const child = await createChildNode({
+      treeId: treeId.value,
+      parentId,
+      selectedContext: text,
+      contextMode: mode,
+      title: text.replace(/\s+/g, ' ').trim().slice(0, 12) || '新分支'
+    })
+    // 父节点可能刚在主界面被删：重新取一遍树再绑定，取不到就直接用返回的节点
+    let t = null
+    try { t = await getTree(treeId.value) } catch (e) { t = null }
+    if (t && (t.nodeList || []).some((n) => n.nodeId === child.nodeId)) {
+      bindTree(t, child.nodeId)
+    } else {
+      nodeId = child.nodeId
+      cur.value = {
+        isRoot: false,
+        title: child.title || '新分支',
+        ctx: text,
+        mode
+      }
+      messages.value = []
+      localStorage.setItem(MINI_NODE_KEY, child.nodeId)
+    }
+    nextTick(() => { if (inputEl.value) inputEl.value.focus() })
+  } catch (e) {
+    messages.value.push({
+      role: 'assistant',
+      content: `⚠️ 新建分支失败：${e.message || '请稍后重试'}`
+    })
+  }
+}
+
+/** 回到这块画布的主会话（根节点） */
+function goRoot() {
+  if (!lastTree) return
+  const root = (lastTree.nodeList || []).find((n) => !n.parentId)
+  if (!root) return
+  bindTree(lastTree, root.nodeId)
+  hideSelPop()
 }
 
 async function send() {
   const content = draft.value.trim()
   if (!content || sending.value) return
-  await ensureTree()
-  if (!nodeId) return
   draft.value = ''
-  messages.value.push({ role: 'user', content })
+  await sendContent(content)
+}
+
+async function sendContent(content, retried = false, notice = '') {
+  // 发送前确认画布还在（被删过就自动重建，不再直接报「对话树不存在」）
+  await ensureAlive()
+  if (!nodeId) {
+    draft.value = content
+    messages.value.push({ role: 'assistant', content: '⚠️ 暂时无法准备速记画布，请稍后重试。' })
+    return
+  }
+  const userBubble = { role: 'user', content }
   const ai = reactive({ role: 'assistant', content: '' })
-  messages.value.push(ai)
+  messages.value.push(userBubble, ai)
   sending.value = true
   scrollBottom()
+  let rebuilt = false
   try {
     await sendQuestionStream(treeId.value, nodeId, content, (chunk) => {
       ai.content += chunk
       scrollBottom()
     })
   } catch (e) {
-    if (!ai.content) ai.content = `⚠️ ${e.message || '请求失败'}`
-    else ai.content += `\n\n⚠️ ${e.message || '请求中断'}`
+    if (isMissingNode(e) && !retried) {
+      // 画布还在，只是承载对话的卡片被删了 → 就地补一张根会话并重发，画布本身不动
+      rebuilt = true
+      try {
+        const t = await getTree(treeId.value)
+        const repaired = await bindOrRepair(t)
+        if (nodeId && repaired) {
+          const tip = '⚠️ 原来的速记会话被删除了，已自动新建一个并重新发送。'
+          messages.value = [{ role: 'assistant', content: tip }]
+          sendContent(content, true, tip)
+        } else if (nodeId) {
+          // 补的时候根节点已经在了（比如主界面刚新建过）：直接重发
+          messages.value = []
+          sendContent(content, true, '')
+        } else {
+          draft.value = content
+          messages.value = [{
+            role: 'assistant',
+            content: '⚠️ 速记会话被删了，自动新建失败，请稍后再试。'
+          }]
+        }
+      } catch (err) {
+        draft.value = content
+        messages.value = [{
+          role: 'assistant',
+          content: '⚠️ 速记会话被删了，自动新建失败，请稍后再试。'
+        }]
+      }
+    } else if (isMissingTree(e) && !retried) {
+      // 整块画布在发送瞬间被删：重建一块，把这条问题原样重发一次，用户无感
+      rebuilt = true
+      resetTree()
+      try { await ensureTree(true) } catch (err) { /* ignore */ }
+      if (nodeId) {
+        const tip = '⚠️ 这块速记画布刚被删除，已自动新建一块并重新发送。'
+        messages.value = [{ role: 'assistant', content: tip }]
+        sendContent(content, true, tip) // 不 await：交给下一轮完成收尾
+      } else {
+        draft.value = content
+        messages.value = [{
+          role: 'assistant',
+          content: '⚠️ 这块速记画布刚被删除，自动新建失败，请稍后再试。'
+        }]
+      }
+    } else if (!ai.content) {
+      ai.content = `⚠️ ${e.message || '请求失败'}`
+    } else {
+      ai.content += `\n\n⚠️ ${e.message || '请求中断'}`
+    }
   } finally {
-    sending.value = false
-    scrollBottom()
-    // 与后端落库内容对齐（后端会把本轮问答写入节点）
-    try {
-      const t = await getTree(treeId.value)
-      bindTree(t)
+    // 走了重建分支时，发送状态与落库对齐交给下一轮负责，避免提前解锁输入
+    if (!rebuilt) {
+      sending.value = false
       scrollBottom()
-    } catch (e) { /* ignore */ }
+      // 与后端落库内容对齐（后端会把本轮问答写入节点）
+      try {
+        const t = await getTree(treeId.value)
+        // 模型调用失败时后端落库的是空回答，直接 bindTree 会把 ⚠️ 提示冲掉
+        const errText = String(ai.content || '').startsWith('⚠️') ? ai.content : ''
+        bindTree(t)
+        // 重建后重发的那一轮：把「已自动新建」的说明补回顶部，别被落库内容冲掉
+        if (notice) messages.value.unshift({ role: 'assistant', content: notice })
+        if (errText) {
+          const last = [...messages.value].reverse().find((m) => m.role === 'assistant')
+          if (last && !String(last.content || '').trim()) last.content = errText
+          else if (!last) messages.value.push({ role: 'assistant', content: errText })
+        }
+        scrollBottom()
+      } catch (e) { /* ignore */ }
+    }
   }
 }
 
@@ -369,7 +646,18 @@ function onWinResize() {
 }
 
 function onKeyDown(e) {
-  if (e.key === 'Escape' && menuOpen.value) closeMenu()
+  if (e.key === 'Escape') {
+    if (selPop.visible) { hideSelPop(); return }
+    if (menuOpen.value) closeMenu()
+  }
+}
+
+/** 任何按下都先把旧选区清掉：点过球 / 标题栏等不可选区后，Chromium 会把
+ *  下一次拖选挂在旧锚点上，表现为"在气泡里怎么拖都选不中"，先清空即可避免 */
+function onShieldDown(e) {
+  const t = e.target
+  if (t && t.closest && t.closest('textarea, input')) return // 输入框里的选区交给原生行为
+  try { window.getSelection()?.removeAllRanges() } catch (err) { /* ignore */ }
 }
 
 onMounted(async () => {
@@ -381,6 +669,7 @@ onMounted(async () => {
   window.addEventListener('pointercancel', endPanelOp)
   window.addEventListener('keydown', onKeyDown)
   window.addEventListener('resize', onWinResize)
+  window.addEventListener('mousedown', onShieldDown, true)
   // 悬浮球窗口默认收起；主窗口里不该出现此组件
   try { await ensureTree() } catch (e) { /* 后端未就绪时静默 */ }
 })
@@ -554,6 +843,63 @@ onMounted(async () => {
 .mini-list { flex: 1; overflow-y: auto; padding: 14px; background: var(--bg-panel); }
 .mini-empty { color: var(--text-dim); font-size: 12.5px; text-align: center; margin-top: 60px; line-height: 1.9; }
 .mini-empty .mini-sub { font-size: 11.5px; color: var(--text-faint); }
+.mini-quote {
+  margin: 8px 0; padding: 8px 10px;
+  font-size: 12px; line-height: 1.6; text-align: left;
+  color: var(--text-sub);
+  background: var(--bg-subtle);
+  border-left: 3px solid var(--success);
+  border-radius: 0 8px 8px 0;
+  max-height: 96px; overflow: hidden;
+}
+
+/* 子分支路径条：告诉用户现在在哪，并提供一键回主会话 */
+.mini-crumb {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 14px;
+  background: rgba(0, 180, 42, .07);
+  border-bottom: 1px solid var(--border-soft);
+  flex-shrink: 0;
+}
+.mini-crumb-t {
+  flex: 1; min-width: 0;
+  font-size: 11.5px; color: var(--success);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mini-crumb button {
+  border: none; background: transparent; cursor: pointer;
+  font-size: 11.5px; color: var(--primary); padding: 2px 4px; border-radius: 5px;
+  font-family: inherit;
+}
+.mini-crumb button:hover { background: var(--bg-subtle); }
+
+/* 划选浮层：紧贴选区，两个建分支入口 */
+.mini-sel-pop {
+  position: absolute;
+  z-index: 60;
+  display: flex; gap: 4px;
+  padding: 4px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .16);
+  user-select: none;
+}
+.sp-btn {
+  border: none; border-radius: 6px; cursor: pointer;
+  padding: 5px 9px; font-size: 12px; line-height: 1;
+  background: transparent; color: var(--text-sub);
+  font-family: inherit; white-space: nowrap;
+}
+.sp-btn:hover { background: var(--bg-subtle); color: var(--primary); }
+.sp-btn:active { transform: scale(.96); }
+.sp-enter-active, .sp-leave-active { transition: opacity .12s ease, transform .12s ease; }
+.sp-enter-from, .sp-leave-to { opacity: 0; transform: translateY(4px); }
+
+/* 划选时高亮跟随主题色 */
+.mini-bubble ::selection, .mini-bubble::selection {
+  background: rgba(22, 93, 255, .22);
+}
 
 .mini-msg { margin-bottom: 12px; display: flex; }
 .mini-msg.user { justify-content: flex-end; }

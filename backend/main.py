@@ -42,7 +42,7 @@ import llm_client
 import storage
 from models import (
     TreeCreateBody, TreeUpdateBody, TreeClearMessagesBody, MiniTreeBody, ChildCreateBody, NodeUpdateBody,
-    SendBody, DuplicateBody, SnapshotBody,
+    SendBody, DuplicateBody, SnapshotBody, RootEnsureBody,
 )
 
 app = FastAPI(title="分支对话 AI 画布", version="0.1.0")
@@ -233,6 +233,22 @@ def tree_clear_messages(body: TreeClearMessagesBody):
 
 
 # ---------------- 节点级接口 ----------------
+
+@app.post("/api/node/create-root")
+def node_create_root(body: RootEnsureBody):
+    """补根节点：画布还在但会话（节点）被删光时，给画布补一张空白根会话。
+
+    悬浮球「快速对话」以根节点为对话载体，节点没了就发不出消息，
+    这里做幂等修复——已有根节点时原样返回，不重复创建。
+    """
+    tree = get_tree_or_404(body.treeId)
+    if any(not n.get("parentId") for n in tree.get("nodeList", [])):
+        return tree
+    tree.setdefault("nodeList", []).append(_new_node(None, ROOT_TITLE_DEFAULT, x=0.0, y=0.0))
+    tree["updateTime"] = now()
+    storage.save_tree(tree)
+    return tree
+
 
 @app.post("/api/node/create-child")
 def node_create_child(body: ChildCreateBody):

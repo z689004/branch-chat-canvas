@@ -20,6 +20,9 @@ export const createTree = (title) =>
 export const getTree = (treeId) => request(`/api/tree/get?treeId=${encodeURIComponent(treeId)}`)
 export const createChildNode = (payload) =>
   request('/api/node/create-child', { method: 'POST', body: JSON.stringify(payload) })
+/** 画布还在但节点被删光时，补一个空白根节点（幂等，返回整棵树） */
+export const ensureRootNodeApi = (treeId) =>
+  request('/api/node/create-root', { method: 'POST', body: JSON.stringify({ treeId }) })
 export const updateNodeApi = (payload) =>
   request('/api/node/update', { method: 'PUT', body: JSON.stringify(payload) })
 export const deleteNodeApi = (treeId, nodeId) =>

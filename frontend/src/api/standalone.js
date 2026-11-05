@@ -284,6 +284,17 @@ export async function createChildNode(payload) {
   return child
 }
 
+/** 画布还在但节点被删光时，补一个空白根节点（幂等，返回整棵树） */
+export async function ensureRootNodeApi(treeId) {
+  const tree = readTree(treeId)
+  if (!tree.nodeList.some((n) => !n.parentId)) {
+    tree.nodeList.push(newNode(null, ROOT_TITLE_DEFAULT, '', 'simple', 0, 0))
+    tree.updateTime = now()
+    writeTree(tree)
+  }
+  return tree
+}
+
 export async function updateNodeApi(payload) {
   const tree = readTree(payload.treeId)
   const node = tree.nodeList.find((n) => n.nodeId === payload.nodeId)

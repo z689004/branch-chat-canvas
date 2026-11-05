@@ -99,6 +99,9 @@ body {
 /* 整理布局时节点平滑移动到金字塔位置（拖拽中不生效） */
 .vue-flow__node { transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1); }
 .vue-flow__node.dragging { transition: none; }
+/* 缩放卡片时必须关掉位移过渡：宽高是瞬时的，位移若滞后 0.28s，
+   拖左/上边就会看到卡片先往右/下长、随后才滑过去，像是拉错了方向 */
+.vue-flow__node:has(.chat-node.resizing) { transition: none; }
 
 /* 缩放百分比 */
 .zoom-badge {
@@ -200,7 +203,7 @@ body {
 .rs-se { bottom: 0; right: 0; cursor: nwse-resize; }
 .rs-nw::after, .rs-ne::after, .rs-sw::after, .rs-se::after {
   content: ''; position: absolute; width: 8px; height: 8px;
-  border: 2px solid var(--text-faint); border-radius: 1px; opacity: 0.9;
+  border: 2px solid var(--text-dim); border-radius: 1px; opacity: 0.9;
 }
 .rs-se::after { right: 4px; bottom: 4px; border-left: none; border-top: none; }
 .rs-sw::after { left: 4px; bottom: 4px; border-right: none; border-top: none; }
@@ -234,6 +237,17 @@ body {
   font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 8px; white-space: nowrap;
 }
 .badge-root { background: rgba(0, 180, 42, 0.14); color: var(--success); }
+/* 快速对话载体：与悬浮球图标同色系（#0FB47E → #067D5A） */
+.badge-quick { background: rgba(15, 180, 126, 0.16); color: #0b9668; flex-shrink: 0; }
+html[data-theme="dark"] .badge-quick { background: rgba(15, 180, 126, 0.2); color: #3fd6a4; }
+.chat-node.is-quick { border-color: rgba(15, 180, 126, 0.45); }
+.chat-node.is-quick::before {
+  content: '';
+  position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: linear-gradient(180deg, #0FB47E, #067D5A);
+  pointer-events: none;
+  z-index: 1;
+}
 .collapsed-count {
   font-size: 11px; color: var(--primary); background: rgba(22, 93, 255, 0.1);
   border-radius: 8px; padding: 1px 6px; white-space: nowrap;
@@ -492,6 +506,29 @@ body {
 .welcome-alt { margin-top: 12px; }
 .welcome-tip { margin-top: 18px; font-size: 12px; color: var(--text-dim); }
 
+/* 空画布（对话被全部删除）：只当浮层提示，不挡画布拖拽 */
+.empty-canvas {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  pointer-events: none;
+  z-index: 4;
+}
+.empty-card {
+  pointer-events: auto;
+  text-align: center; max-width: 420px; padding: 32px 34px;
+  background: var(--bg-panel); border: 1px solid var(--border);
+  border-radius: 18px; box-shadow: var(--shadow-pop);
+}
+.empty-icon { font-size: 34px; line-height: 1; margin-bottom: 10px; }
+.empty-card h3 { margin: 0 0 8px; font-size: 18px; color: var(--text); }
+.empty-card p { margin: 0 0 20px; font-size: 13px; line-height: 1.75; color: var(--text-sub); }
+.empty-link {
+  display: block; margin: 12px auto 0; padding: 2px 4px;
+  background: none; border: none; cursor: pointer;
+  font-size: 12px; color: var(--text-dim);
+}
+.empty-link:hover { color: var(--primary); text-decoration: underline; }
+
 /* VueFlow 控件 */
 .vue-flow__controls { box-shadow: 0 2px 12px rgba(31,35,41,.12); border-radius: 8px; overflow: hidden; }
 .vue-flow__minimap { border-radius: 8px; background: var(--bg-panel); }
@@ -557,7 +594,18 @@ html[data-mini="1"] #app {
   margin: 0;
   padding: 0;
 }
+/* 外壳（球 / 标题栏 / 菜单）保持不可选，避免拖动时选中文字；
+   对话内容区允许划选——用于「选段 → 生成子分支」 */
 html[data-mini="1"] body { user-select: none; }
+html[data-mini="1"] .mini-list,
+html[data-mini="1"] .mini-list * {
+  user-select: text;
+  -webkit-user-select: text;
+}
+html[data-mini="1"] .mini-list .mini-empty,
+html[data-mini="1"] .mini-crumb { user-select: none; }
+html[data-mini="1"] .mini-bubble { cursor: text; }
+html[data-mini="1"] textarea { user-select: text; -webkit-user-select: text; }
 
 /* ---------- 笔记 / 收藏夹：右侧面板 + 入口按钮 ---------- */
 .pop-btn.note { background: var(--text-sub); }

@@ -3,7 +3,7 @@ import { ElMessage } from 'element-plus'
 import {
   listTrees, createTree, getTree, createChildNode,
   updateNodeApi, deleteNodeApi, deleteTreeApi, clearTreeMessages, renameTreeApi,
-  sendQuestionStream, duplicateNode, saveTreeSnapshot
+  sendQuestionStream, duplicateNode, saveTreeSnapshot, ensureRootNodeApi
 } from '../api'
 
 const LAST_TREE_KEY = 'bcc:lastTreeId'
@@ -264,6 +264,29 @@ export const useTreeStore = defineStore('tree', {
       return doomed.size
     },
 
+    /** 画布里的对话被删空后，补回一张空白根会话（幂等：已有根节点则原样返回）
+     *  空画布时界面上会给出「新建一个对话」按钮，这里就是它的落点 */
+    async ensureRoot() {
+      if (!this.treeId) return null
+      this.commit()
+      this.touch()
+      try {
+        const res = await ensureRootNodeApi(this.treeId)
+        if (res && Array.isArray(res.nodeList)) this.nodes = res.nodeList
+        else {
+          const fresh = await getTree(this.treeId)
+          this.nodes = fresh.nodeList
+        }
+        await this.refreshTreeList()
+        return this.roots[0] || null
+      } catch (e) {
+        ElMessage.error(`新建对话失败：${e.message || '请稍后重试'}`)
+        return null
+      } finally {
+        this.settled()
+      }
+    },
+
     /** 批量删除：自动跳过「祖先也在选中集合里」的节点 */
     async removeNodes(ids) {
       const set = new Set(ids)
@@ -403,8 +426,14 @@ export const useTreeStore = defineStore('tree', {
     /** 删除画布：整棵树从磁盘移除，回到欢迎页 */
     async deleteCanvas() {
       if (!this.treeId) return
-      try { await deleteTreeApi(this.treeId) } catch (e) { console.warn(e) }
+      const removed = this.treeId
+      try { await deleteTreeApi(removed) } catch (e) { console.warn(e) }
       localStorage.removeItem(LAST_TREE_KEY)
+      // 删掉的正好是快速对话的载体画布：本地指针一并作废，
+      // 悬浮球下次打开会自己新建一块（否则会拿着失效 id 报「对话树不存在」）
+      if (localStorage.getItem('bcc:miniTreeId') === removed) {
+        localStorage.removeItem('bcc:miniTreeId')
+      }
       this.treeId = null
       this.treeTitle = ''
       this.nodes = []

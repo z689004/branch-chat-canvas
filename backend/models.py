@@ -51,6 +51,11 @@ class MiniTreeBody(BaseModel):
     treeId: str = ""
 
 
+class RootEnsureBody(BaseModel):
+    """给已有画布补一个根节点（节点被删光后仍可继续对话）"""
+    treeId: str
+
+
 class ChildCreateBody(BaseModel):
     treeId: str
     parentId: str
