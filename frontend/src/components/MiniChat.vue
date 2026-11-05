@@ -10,11 +10,11 @@
     <button
       v-if="!expanded"
       class="mini-ball"
+      :style="ballBgStyle"
       title="左键打开快速对话，按住可拖动，右键更多操作"
       @pointerdown.left.prevent.stop="onBallDown"
       @contextmenu.prevent.stop="openMenu"
-    >
-    </button>
+    ></button>
 
     <!-- ============ 右键菜单（窗口临时放大，球固定在右下角） ============ -->
     <transition name="bm">
@@ -83,9 +83,19 @@
 import { ref, reactive, nextTick, onMounted } from 'vue'
 import MarkdownIt from 'markdown-it'
 import { createTree, getTree, sendQuestionStream, getMiniTreeApi, setMiniTreeApi } from '../api'
+// 球图标走源码打包（带哈希入 dist/assets），不再依赖 public/ —— 避免被构建清理误删
+import ballIcon from '../assets/icon-ball.png'
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
 const renderMd = (s) => md.render(s || '')
+
+// 球背景：应用图标 contain 铺满 + 同款渐变兜底（内联完整覆盖，避免类里 background 简写重置 size/position）
+const ballBgStyle = {
+  backgroundImage: `url(${ballIcon}), linear-gradient(145deg, #0FB47E, #067D5A)`,
+  backgroundSize: 'contain, cover',
+  backgroundPosition: 'center, center',
+  backgroundRepeat: 'no-repeat, no-repeat'
+}
 
 const MINI_KEY = 'bcc:miniTreeId'
 const MINI_TITLE = '悬浮速记'
@@ -402,10 +412,8 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  /* contain + 图标同款渐变兜底：窗口尺寸瞬间异常时图标也不会被拉伸 */
-  background:
-    url('/icon-ball.png') center / contain no-repeat,
-    linear-gradient(145deg, #0FB47E, #067D5A);
+  /* 图标由内联 style 注入（源码打包），这里保留渐变兜底：窗口尺寸瞬间异常时也不露白 */
+  background: linear-gradient(145deg, #0FB47E, #067D5A);
   transition: filter .16s ease;
   -webkit-user-select: none;
   user-select: none;

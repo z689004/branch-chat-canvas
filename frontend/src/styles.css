@@ -709,7 +709,7 @@ html[data-theme="dark"] .np-mini.danger:hover { background: rgba(247, 101, 96, 0
 .toolbar.compact-mode .tree-name { max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
 .toolbar.compact-mode .tb-group .el-select { width: 110px !important; }
 .shub-pop {
-  position: fixed; z-index: 2500; width: 420px;
+  position: fixed; z-index: 1500; width: 420px;
   background: var(--bg-panel); border: 1px solid var(--border); border-radius: 12px;
   box-shadow: var(--shadow-pop); padding: 6px 4px;
   animation: pop-in-menu 0.12s ease-out;
